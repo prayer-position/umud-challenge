@@ -1,0 +1,14 @@
+.venv/
+apo_imgs_v1/
+apo_masks_v1/
+fasc_imgs_v1/
+fasc_masks_v1/
+test_images_v2/
+outputs/
+submissions/
+__pycache__/
+*.pt
+*.pth
+.ipynb_checkpoints/
+*.egg-info/
+.pytest_cache/
