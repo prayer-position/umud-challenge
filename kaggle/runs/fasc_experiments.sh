@@ -6,11 +6,12 @@
 # (--kernel-source <owner>/umud-unet-train): its apo_best.pt is reused and its
 # fasc_best.pt (configs/fasc_seg.yaml) is the baseline.
 set -uo pipefail
-OUT=/kaggle/working
-mkdir -p "$OUT/logs" "$OUT/eval" "$OUT/viz"
+OUT=${OUT:-/kaggle/working}
+INPUT=${INPUT:-/kaggle/input}
+mkdir -p "$OUT/logs" "$OUT/eval" "$OUT/history" "$OUT/viz"
 EXPERIMENTS=(fasc_seg_512x768 fasc_seg_768x1152)
 
-PREV=$(dirname "$(find /kaggle/input -name apo_best.pt | head -1)")
+PREV=$(dirname "$(find "$INPUT" -name apo_best.pt | head -1)")
 echo "previous run outputs: $PREV"
 mkdir -p outputs/checkpoints
 cp "$PREV/apo_best.pt" outputs/checkpoints/apo_best.pt
@@ -32,7 +33,7 @@ done
 for name in "${EXPERIMENTS[@]}"; do
     echo "== $name"; grep -E "data ready|epoch|early stop|Error" "$OUT/logs/train_$name.log" | tail -60
 done
-cp outputs/checkpoints/*_history.json "$OUT/eval/" 2>/dev/null
+cp outputs/checkpoints/*_history.json "$OUT/history/" 2>/dev/null
 
 # Final scores with flip TTA, on the same validation split as the baseline.
 for name in "${EXPERIMENTS[@]}"; do
