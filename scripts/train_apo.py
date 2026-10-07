@@ -9,10 +9,13 @@ def main() -> None:
     parser.add_argument("--config", default="configs/apo_seg.yaml")
     parser.add_argument("--subset", type=int, default=None, help="Use only the first N samples (smoke test).")
     parser.add_argument("--epochs", type=int, default=None, help="Override config epochs.")
+    parser.add_argument("--run-name", default=None, help="Checkpoint name prefix (default: apo).")
     args = parser.parse_args()
 
     config = load_config(args.config)
-    checkpoint_path = run_training("apo", config, subset=args.subset, epochs=args.epochs)
+    checkpoint_path = run_training(
+        "apo", config, subset=args.subset, epochs=args.epochs, run_name=args.run_name
+    )
     print(f"Best checkpoint saved to {checkpoint_path}")
 
 

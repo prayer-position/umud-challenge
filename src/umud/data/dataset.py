@@ -1,3 +1,5 @@
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -11,7 +13,11 @@ from umud.data import schema
 
 
 def load_image(path: Path) -> np.ndarray:
-    if path.suffix.lower() in {".tif", ".tiff"}:
+    # Some test "*.tif" files are really PNGs, so sniff the header rather
+    # than trusting the extension.
+    with open(path, "rb") as f:
+        is_tiff = f.read(4) in (b"II*\x00", b"MM\x00*")
+    if is_tiff:
         arr = tifffile.imread(str(path))
     else:
         arr = np.array(Image.open(path).convert("RGB"))
@@ -67,6 +73,24 @@ def binarize_mask(mask: np.ndarray) -> np.ndarray:
     return mask == minority_value
 
 
+def resize_mask(mask: np.ndarray, size: tuple[int, int], line_px: int = 0) -> np.ndarray:
+    """Resize a binary mask to (h, w).
+
+    With line_px == 0 this is plain nearest-neighbour resizing. Fascicle
+    labels are 1px-wide lines, which nearest-neighbour downsampling breaks
+    into scattered dots; with line_px > 0, every target pixel that the line
+    touches is kept (area resize, any coverage -> foreground) and the result
+    is dilated to roughly line_px pixels wide.
+    """
+    h, w = size
+    if line_px <= 0:
+        return cv2.resize(mask.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST)
+    out = (cv2.resize(mask.astype(np.float32), (w, h), interpolation=cv2.INTER_AREA) > 0).astype(np.uint8)
+    if line_px > 1:
+        out = cv2.dilate(out, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (line_px, line_px)))
+    return out
+
+
 class MaskDataset(Dataset):
     """Binary foreground/background segmentation dataset for one image/mask
     pool (apo or fasc). See `binarize_mask` for how raw mask values are
@@ -80,28 +104,59 @@ class MaskDataset(Dataset):
     resized to `image_size` here, before Albumentations runs, since
     Albumentations requires matching input shapes and this keeps training
     and inference (where no mask exists to size against) consistent.
+
+    `indices` restricts the dataset to those positions in the sorted file
+    list. With `cache`, every resized image/mask pair is decoded once up
+    front and kept in memory (decoding the LZW TIFFs dominates per-sample
+    cost otherwise).
     """
 
-    def __init__(self, image_dir: Path, mask_dir: Path, image_size: tuple[int, int], transform=None):
+    def __init__(
+        self,
+        image_dir: Path,
+        mask_dir: Path,
+        image_size: tuple[int, int],
+        transform=None,
+        line_px: int = 0,
+        indices: list[int] | None = None,
+        cache: bool = False,
+    ):
         self.image_dir = Path(image_dir)
         self.mask_dir = Path(mask_dir)
         self.image_paths = schema.list_image_files(self.image_dir)
-        self.image_size = image_size
+        if indices is not None:
+            self.image_paths = [self.image_paths[i] for i in indices]
+        self.image_size = tuple(image_size)
         self.transform = transform
+        self.line_px = line_px
+        self._images = self._masks = None
+        if cache:
+            h, w = self.image_size
+            self._images = np.empty((len(self), h, w, 3), dtype=np.uint8)
+            self._masks = np.empty((len(self), h, w), dtype=np.uint8)
+            with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+                for idx, (image, mask) in enumerate(pool.map(self._load_resized, range(len(self)))):
+                    self._images[idx], self._masks[idx] = image, mask
 
     def __len__(self) -> int:
         return len(self.image_paths)
 
-    def __getitem__(self, idx: int):
-        image_path = self.image_paths[idx]
-        mask_path = self.mask_dir / image_path.name
+    def mask_path(self, idx: int) -> Path:
+        return self.mask_dir / self.image_paths[idx].name
 
-        image = load_image(image_path)
-        mask = binarize_mask(load_mask(mask_path)).astype(np.uint8)
-
+    def _load_resized(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
+        image = load_image(self.image_paths[idx])
+        mask = binarize_mask(load_mask(self.mask_path(idx)))
         h, w = self.image_size
         image = cv2.resize(image, (w, h), interpolation=cv2.INTER_AREA)
-        mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST).astype(np.int64)
+        return image, resize_mask(mask, self.image_size, self.line_px)
+
+    def __getitem__(self, idx: int):
+        if self._images is not None:
+            image, mask = self._images[idx], self._masks[idx]
+        else:
+            image, mask = self._load_resized(idx)
+        mask = mask.astype(np.int64)
 
         if self.transform is not None:
             augmented = self.transform(image=image, mask=mask)

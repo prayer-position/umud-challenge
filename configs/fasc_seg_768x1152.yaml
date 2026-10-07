@@ -1,0 +1,21 @@
+# Fascicle model at 768x1152 (2:3, the aspect of most frames). Fascicle labels
+# are 1px lines, so masks are resized line-preservingly and dilated to
+# ~5px; checkpoints are picked by validation fascicle-angle error.
+arch: Unet
+image_size: [768, 1152]
+encoder: resnet34
+num_classes: 1
+line_px: 5
+batch_size: 8
+lr: 0.0003
+scheduler: cosine
+warmup_epochs: 1
+epochs: 50
+early_stopping_patience: 10
+select_metric: angle_mae
+amp: true
+cache: true
+flip: true
+num_workers: 2
+seed: 42
+val_frac: 0.15
