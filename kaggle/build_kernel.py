@@ -1,9 +1,12 @@
 """Build a self-contained Kaggle script kernel and its push request.
 
-    python kaggle/build_kernel.py --owner <kaggle-username>
+    python kaggle/build_kernel.py --owner <kaggle-username> --run full
+    python kaggle/build_kernel.py --owner <kaggle-username> --run fasc_experiments \
+        --slug umud-fasc-exp1 --kernel-source <kaggle-username>/umud-unet-train
 
 Writes kaggle/build/umud_train.py (the kernel source, with the committed repo
-embedded as a tarball) and kaggle/build/push_request.json, a body for
+embedded as a tarball; it runs kaggle/runs/<run>.sh) and
+kaggle/build/push_request.json, a body for
 POST https://www.kaggle.com/api/v1/kernels/push.
 """
 import argparse
@@ -14,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPETITION = "umud-challenge-muscle-architecture-in-ultrasound-data"
-REPO_PATHS = ["src", "scripts", "configs", "pyproject.toml", "sample_submission.csv"]
+REPO_PATHS = ["src", "scripts", "configs", "kaggle/runs", "pyproject.toml", "sample_submission.csv"]
 
 
 def main() -> None:
@@ -23,9 +26,18 @@ def main() -> None:
     parser.add_argument("--slug", default="umud-unet-train")
     parser.add_argument("--title", default="UMUD UNet Train")
     parser.add_argument("--machine-shape", default="NvidiaTeslaT4")
-    parser.add_argument("--epochs", type=int, default=None, help="Override config epochs in both train scripts.")
+    parser.add_argument("--run", default="full", help="Script in kaggle/runs/ to execute (without .sh).")
+    parser.add_argument("--run-args", nargs="*", default=[], help="Arguments passed to the run script.")
+    parser.add_argument(
+        "--kernel-source",
+        action="append",
+        default=[],
+        help="owner/slug of a kernel whose outputs to mount under /kaggle/input (repeatable).",
+    )
     args = parser.parse_args()
 
+    if not (ROOT / "kaggle" / "runs" / f"{args.run}.sh").exists():
+        parser.error(f"no such run script: kaggle/runs/{args.run}.sh")
     tgz = subprocess.run(
         ["git", "archive", "--format=tar.gz", "HEAD", *REPO_PATHS], cwd=ROOT, check=True, capture_output=True
     ).stdout
@@ -33,7 +45,8 @@ def main() -> None:
         (ROOT / "kaggle" / "kernel_template.py")
         .read_text()
         .replace("__REPO_TGZ_B64__", base64.b64encode(tgz).decode())
-        .replace("__EXTRA_ARGS__", repr([] if args.epochs is None else ["--epochs", str(args.epochs)]))
+        .replace("__RUN_SCRIPT__", f"kaggle/runs/{args.run}.sh")
+        .replace("__EXTRA_ARGS__", repr(args.run_args))
     )
 
     out_dir = ROOT / "kaggle" / "build"
@@ -51,7 +64,7 @@ def main() -> None:
         "machineShape": args.machine_shape,
         "competitionDataSources": [COMPETITION],
         "datasetDataSources": [],
-        "kernelDataSources": [],
+        "kernelDataSources": args.kernel_source,
         "modelDataSources": [],
         "categoryIds": [],
     }
