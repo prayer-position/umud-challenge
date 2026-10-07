@@ -23,7 +23,7 @@ def main() -> None:
     parser.add_argument("--slug", default="umud-unet-train")
     parser.add_argument("--title", default="UMUD UNet Train")
     parser.add_argument("--machine-shape", default="NvidiaTeslaT4")
-    parser.add_argument("--extra-args", nargs="*", default=[], help="Passed to both train scripts, e.g. --epochs 1.")
+    parser.add_argument("--epochs", type=int, default=None, help="Override config epochs in both train scripts.")
     args = parser.parse_args()
 
     tgz = subprocess.run(
@@ -33,7 +33,7 @@ def main() -> None:
         (ROOT / "kaggle" / "kernel_template.py")
         .read_text()
         .replace("__REPO_TGZ_B64__", base64.b64encode(tgz).decode())
-        .replace("__EXTRA_ARGS__", repr(args.extra_args))
+        .replace("__EXTRA_ARGS__", repr([] if args.epochs is None else ["--epochs", str(args.epochs)]))
     )
 
     out_dir = ROOT / "kaggle" / "build"
