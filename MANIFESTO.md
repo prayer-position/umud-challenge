@@ -52,7 +52,7 @@ private to the `charlesdidier` account.
 |---|---|---|---|
 | 1 | `charlesdidier/umud-unet-smoke` | Original pipeline, 1 epoch each, T4 | Pipeline works end to end on Kaggle (~5 min). Dice: apo 0.17, fasc 0.009 |
 | 2 | `charlesdidier/umud-unet-train` | Original pipeline, 30 epochs each, 512x512, ~1 h 50 min | Best val Dice: **apo 0.821** (epoch 25, plateau from ~20), **fasc 0.318** (epoch 30, still creeping up). Outputs: `apo_best.pt`, `fasc_best.pt`, `submission.csv` |
-| 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline: 512x768 vs 768x1152 in parallel on 2x T4; baseline (run 2 fasc model) scored on the same val split; submission from the best | In progress |
+| 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline (`kaggle/runs/fasc_experiments.sh`): 512x768 vs 768x1152 in parallel on 2x T4; baseline (run 2 fasc model) scored on the same val split; submission + overlays from the best | Started 10:50 UTC, running |
 
 Training speed in run 2: ~22 img/s (fp32, one T4); validation (forward
 only) ~44 img/s, so fp32 compute was the bottleneck, followed by decoding
@@ -86,7 +86,12 @@ the LZW TIFFs (~100 ms/image/core).
      models trained with flips; NaNs in the submission filled with medians.
    - `load_image` detects PNG content regardless of extension.
    - Configs `configs/fasc_seg_512x768.yaml`, `configs/fasc_seg_768x1152.yaml`.
-3. **Mask overlays** (`scripts/visualize_fascicles.py`, `src/umud/viz.py`):
+3. **Run scripts** (`kaggle/runs/*.sh`): each Kaggle notebook runs one;
+   `full.sh` reproduces run 2, `fasc_experiments.sh` is run 3. Before the
+   push, every script path was smoke-tested locally (inference only) and the
+   run script's control flow was dry-run with stubbed commands, which caught
+   a bug that would have crashed the best-model selection.
+4. **Mask overlays** (`scripts/visualize_fascicles.py`, `src/umud/viz.py`):
    grids of ground truth (green) and/or predictions (magenta) over images,
    for train/val/test, with per-image segment counts and median angles.
 
