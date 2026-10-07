@@ -1,11 +1,10 @@
 """Derive Pennation Angle / Fascicle Length / Muscle Thickness from predicted
 segmentation masks.
 
-pixel_to_mm calibration is unconfirmed (no scale bar / spacing metadata was
-found in the extracted data during EDA) -- results are in pixel units unless
-a calibration factor is supplied, and default to 1.0 (i.e. pixel units)
-until this is resolved. Sanity-check against the real leaderboard score
-after a first submission.
+Measurements take `px_per_mm` as (rows, cols) pixels per millimetre (see
+umud/calibration.py): pixel coordinates are converted to millimetres before
+any line fitting, so lengths come out in mm and angles are physical even when
+a screenshot was stretched unevenly. The default (1, 1) gives pixel units.
 
 Fascicle masks hold many short line segments (~17 per training image, each
 4-25% of the image diagonal), and fascicles usually run past the visible
@@ -37,29 +36,34 @@ def _fit_line(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return centroid, direction / np.linalg.norm(direction)
 
 
-def _largest_components(mask: np.ndarray, n: int) -> list[np.ndarray]:
+Scale = tuple[float, float]
+
+
+def _largest_components(mask: np.ndarray, n: int, px_per_mm: Scale = (1.0, 1.0)) -> list[np.ndarray]:
     """Return up to n largest connected components as (row, col) point
-    arrays, largest first."""
+    arrays in mm, largest first."""
     labeled = label(mask > 0)
     regions = sorted(regionprops(labeled), key=lambda r: r.area, reverse=True)
-    return [r.coords for r in regions[:n]]
+    return [r.coords / np.asarray(px_per_mm) for r in regions[:n]]
 
 
 def fascicle_lines(
-    mask: np.ndarray, min_length_frac: float = MIN_FASCICLE_LENGTH_FRAC
+    mask: np.ndarray, min_length_frac: float = MIN_FASCICLE_LENGTH_FRAC, px_per_mm: Scale = (1.0, 1.0)
 ) -> list[tuple[np.ndarray, np.ndarray, float]]:
     """Fit a line to every fascicle segment in the mask.
 
-    Returns (centroid, unit_direction, visible_length_px) per segment that is
-    at least `min_length_frac` of the image diagonal long.
+    Returns (centroid, unit_direction, visible_length) per segment that is at
+    least `min_length_frac` of the image diagonal long, in mm.
     """
-    min_length = min_length_frac * float(np.hypot(*mask.shape[:2]))
+    scale = np.asarray(px_per_mm, dtype=float)
+    min_length = min_length_frac * float(np.hypot(*(np.asarray(mask.shape[:2]) / scale)))
     lines = []
     for region in regionprops(label(mask > 0, connectivity=2)):
         if region.area < 2:
             continue
-        centroid, direction = _fit_line(region.coords.astype(float))
-        projections = (region.coords - centroid) @ direction
+        coords = region.coords / scale
+        centroid, direction = _fit_line(coords)
+        projections = (coords - centroid) @ direction
         length = float(projections.max() - projections.min())
         if length >= min_length:
             lines.append((centroid, direction, length))
@@ -104,37 +108,48 @@ def _intersect(p: np.ndarray, d: np.ndarray, q: np.ndarray, e: np.ndarray) -> fl
     return float((w[0] * e[1] - w[1] * e[0]) / cross)
 
 
-def _aponeurosis_lines(apo_mask: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Lines fitted to the two largest aponeurosis components, ordered
-    superficial (smaller mean row) first."""
-    components = sorted(_largest_components(apo_mask, n=2), key=lambda c: c[:, 0].mean())
-    return [_fit_line(c.astype(float)) for c in components]
+def _aponeurosis_components(apo_mask: np.ndarray, px_per_mm: Scale) -> list[np.ndarray]:
+    """The two largest aponeurosis components in mm, ordered superficial
+    (smaller mean row) first."""
+    return sorted(_largest_components(apo_mask, n=2, px_per_mm=px_per_mm), key=lambda c: c[:, 0].mean())
 
 
-def measure_thickness(apo_mask: np.ndarray, pixel_to_mm: float = 1.0) -> float:
-    """Perpendicular distance between the two largest components of the
-    aponeurosis mask (assumed to be the superficial and deep aponeurosis
-    lines). Returns NaN if fewer than two components are found."""
-    components = _largest_components(apo_mask, n=2)
+def _aponeurosis_lines(apo_mask: np.ndarray, px_per_mm: Scale) -> list[tuple[np.ndarray, np.ndarray]]:
+    return [_fit_line(c) for c in _aponeurosis_components(apo_mask, px_per_mm)]
+
+
+def measure_thickness(apo_mask: np.ndarray, px_per_mm: Scale = (1.0, 1.0)) -> float:
+    """Muscle thickness: perpendicular distance from the deep aponeurosis to
+    the superficial one, averaged over three points (25/50/75%) across the
+    width both aponeuroses cover, as in the manual protocol. Returns NaN if
+    fewer than two aponeurosis components are found."""
+    components = _aponeurosis_components(apo_mask, px_per_mm)
     if len(components) < 2:
         return float("nan")
+    (sup_c, sup_d), (deep_c, deep_d) = (_fit_line(c) for c in components)
 
-    centroid_a, direction_a = _fit_line(components[0])
-    centroid_b, _ = _fit_line(components[1])
-
-    normal = np.array([-direction_a[1], direction_a[0]])
-    distance_px = abs(np.dot(centroid_b - centroid_a, normal))
-    return float(distance_px * pixel_to_mm)
+    left = max(c[:, 1].min() for c in components)
+    right = min(c[:, 1].max() for c in components)
+    if right <= left:  # no horizontal overlap: use the deep line's centre
+        left = right = deep_c[1]
+    normal = np.array([-sup_d[1], sup_d[0]])
+    distances = []
+    for col in np.linspace(left, right, 5)[1:4]:
+        if abs(deep_d[1]) < 1e-6:
+            continue
+        point = deep_c + deep_d * (col - deep_c[1]) / deep_d[1]
+        distances.append(abs(float(np.dot(point - sup_c, normal))))
+    return float(np.mean(distances)) if distances else float("nan")
 
 
 def measure_fascicle(
     fasc_mask: np.ndarray,
     apo_mask: np.ndarray | None = None,
-    pixel_to_mm: float = 1.0,
+    px_per_mm: Scale = (1.0, 1.0),
     min_length_frac: float = MIN_FASCICLE_LENGTH_FRAC,
 ) -> tuple[float, float]:
-    """Returns (fascicle_length_mm, pennation_angle_deg), each the median over
-    all fascicle segments.
+    """Returns (fascicle_length, pennation_angle_deg), each the median over
+    all fascicle segments; length is in mm given `px_per_mm`.
 
     With both aponeuroses found, each segment's line is extended to the
     superficial and deep aponeurosis lines: length is the distance between
@@ -143,11 +158,11 @@ def measure_fascicle(
     extent and the angle is measured against the image horizontal (or the
     single aponeurosis found).
     """
-    lines = fascicle_lines(fasc_mask, min_length_frac)
+    lines = fascicle_lines(fasc_mask, min_length_frac, px_per_mm)
     if not lines:
         return float("nan"), float("nan")
 
-    apo_lines = _aponeurosis_lines(apo_mask) if apo_mask is not None else []
+    apo_lines = _aponeurosis_lines(apo_mask, px_per_mm) if apo_mask is not None else []
     reference = apo_lines[-1][1] if apo_lines else np.array([0.0, 1.0])
 
     angles = [_acute_angle_deg(direction, reference) for _, direction, _ in lines]
@@ -155,7 +170,7 @@ def measure_fascicle(
     lengths = []
     if len(apo_lines) == 2:
         (sup_c, sup_d), (deep_c, deep_d) = apo_lines
-        max_length = 4 * float(np.hypot(*fasc_mask.shape[:2]))
+        max_length = 4 * float(np.hypot(*(np.asarray(fasc_mask.shape[:2]) / np.asarray(px_per_mm))))
         for centroid, direction, _ in lines:
             t_sup = _intersect(centroid, direction, sup_c, sup_d)
             t_deep = _intersect(centroid, direction, deep_c, deep_d)
@@ -168,4 +183,4 @@ def measure_fascicle(
     if not lengths:
         lengths = [visible for _, _, visible in lines]
 
-    return float(np.median(lengths) * pixel_to_mm), float(np.median(angles))
+    return float(np.median(lengths)), float(np.median(angles))

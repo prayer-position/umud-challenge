@@ -12,12 +12,15 @@ from torch.utils.data import Dataset
 from umud.data import schema
 
 
-def load_image(path: Path) -> np.ndarray:
-    # Some test "*.tif" files are really PNGs, so sniff the header rather
-    # than trusting the extension.
+def is_png(path: Path) -> bool:
+    """Some test "*.tif" files are really PNGs, so sniff the header rather
+    than trusting the extension."""
     with open(path, "rb") as f:
-        is_tiff = f.read(4) in (b"II*\x00", b"MM\x00*")
-    if is_tiff:
+        return f.read(4) == b"\x89PNG"
+
+
+def load_image(path: Path) -> np.ndarray:
+    if not is_png(path):
         arr = tifffile.imread(str(path))
     else:
         arr = np.array(Image.open(path).convert("RGB"))

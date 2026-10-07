@@ -87,3 +87,25 @@ def test_resize_mask_keeps_thin_lines_connected():
     preserved = resize_mask(mask, (512, 768), line_px=3)
     assert label(preserved).max() == 1
     assert label(nearest, connectivity=2).max() > 1
+
+
+def test_measurements_use_anisotropic_scale():
+    # Stretched screenshot: 2 px/mm vertically, 1 px/mm horizontally. A
+    # 45-degree line in pixels is atan(1/2) = 26.6 degrees in mm, and
+    # aponeuroses 120 px apart vertically are 60 mm apart.
+    shape = (300, 300)
+    apo_mask = _line_mask(shape, 40, 0, 40, 299) | _line_mask(shape, 160, 0, 160, 299)
+    fasc_mask = _line_mask(shape, 80, 100, 110, 130)
+    scale = (2.0, 1.0)
+    assert abs(measure_thickness(apo_mask, px_per_mm=scale) - 60) < 2
+    length, angle = measure_fascicle(fasc_mask, apo_mask=apo_mask, px_per_mm=scale)
+    assert abs(angle - np.degrees(np.arctan(0.5))) < 2
+    assert abs(length - np.hypot(60, 120)) < 5
+
+
+def test_measure_thickness_averages_across_width():
+    # Diverging aponeuroses: 40 px apart on the left, 80 px on the right;
+    # the 25/50/75% average over the shared width is ~60.
+    shape = (200, 400)
+    apo_mask = _line_mask(shape, 40, 0, 40, 399) | _line_mask(shape, 80, 0, 120, 399)
+    assert abs(measure_thickness(apo_mask) - 60) < 3

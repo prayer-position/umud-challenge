@@ -9,9 +9,10 @@ private to the `charlesdidier` account.
 | Item | State |
 |---|---|
 | Aponeurosis model | Trained (Kaggle run 2): val Dice 0.821 |
-| Fascicle model | Baseline (run 2): val Dice 0.318. Reworked pipeline, experiment run 3 in progress |
-| Submission | Built by run 2; **not uploaded**. FL/MT are in pixels (`--pixel-to-mm` unknown) |
-| Competition metric | Not confirmed; `src/umud/metrics.py` is a placeholder |
+| Fascicle model | Run 3, 768x1152: val Dice 0.649 (baseline 0.318); angle error tied with baseline at the label-noise floor |
+| Calibration | Per-image px/mm from on-screen rulers, all 309 test images (`src/umud/calibration.py`) |
+| Submission | Run 4 (calibrated, mm) pending; **nothing uploaded to the competition yet** |
+| Competition metric | Confirmed: mean of MAE/tolerance with tolerances PA 6 deg, FL 12 mm, MT 3 mm |
 
 ## Environment and access (2026-10-07)
 
@@ -42,7 +43,16 @@ private to the `charlesdidier` account.
   fascicles (e.g. `image_0966`: 9 segments, dozens visible). Pixel metrics
   (Dice) therefore under-rate good models.
 - Aponeurosis labels are ~12px-wide bands, 2-4 components per image.
-- 58 of the 309 test images are PNG files named `.tif`.
+- 58 of the 309 test images are PNGs (`IMG_00252.png`..`IMG_00309.png`; an
+  earlier note here wrongly said they were named `.tif`). Submission ids
+  keep the file extension, as in `sample_submission.csv`.
+- **Training duplicates**: 75% of validation images have a near-identical
+  training image (median thumbnail correlation 0.998), and the organizers
+  confirm duplicates in the training set (competition discussion 740356).
+  The random split is therefore leaky. Duplicate frames' labels differ by
+  ~1.06 deg in median fascicle angle, i.e. ~1 deg is annotation noise.
+- A constant fascicle-angle guess scores 3.37 deg on validation, so the
+  models (~0.74 deg) do learn orientation.
 - Some frames contain green scanner graphics near the bottom (part of the
   image, not the labels).
 
@@ -52,11 +62,46 @@ private to the `charlesdidier` account.
 |---|---|---|---|
 | 1 | `charlesdidier/umud-unet-smoke` | Original pipeline, 1 epoch each, T4 | Pipeline works end to end on Kaggle (~5 min). Dice: apo 0.17, fasc 0.009 |
 | 2 | `charlesdidier/umud-unet-train` | Original pipeline, 30 epochs each, 512x512, ~1 h 50 min | Best val Dice: **apo 0.821** (epoch 25, plateau from ~20), **fasc 0.318** (epoch 30, still creeping up). Outputs: `apo_best.pt`, `fasc_best.pt`, `submission.csv` |
-| 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline (`kaggle/runs/fasc_experiments.sh`): 512x768 vs 768x1152 in parallel on 2x T4; baseline (run 2 fasc model) scored on the same val split; submission + overlays from the best | Started 10:50 UTC, running |
+| 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline (`kaggle/runs/fasc_experiments.sh`): 512x768 vs 768x1152 in parallel on 2x T4; baseline scored on the same val split; submission + overlays from the best. ~2 h 50 min | Val angle MAE / p90 / Dice (flip TTA): **768x1152 0.73 / 1.48 deg / 0.649** (early-stopped at 37, best epoch 27), 512x768 0.75 / 1.50 / 0.634 (stopped at 39, best 29), baseline 0.74 / 1.65 / 0.318. Dice doubled; angle error is tied at the ~1 deg label-noise floor of a leaky split, so it cannot rank them. Submission still uncalibrated (pixels) |
+| 4 | `charlesdidier/umud-predict-v1` | `kaggle/runs/predict.sh`: no training; run-2 apo + run-3 768x1152 fasc, per-image calibration, measurements in mm, clipped to published ranges | Pending |
 
 Training speed in run 2: ~22 img/s (fp32, one T4); validation (forward
 only) ~44 img/s, so fp32 compute was the bottleneck, followed by decoding
-the LZW TIFFs (~100 ms/image/core).
+the LZW TIFFs (~100 ms/image/core). In run 3, two trainings shared the 4
+CPUs: 123 s/epoch at 512x768 and 270 s/epoch at 768x1152 (CPU-bound
+augmentation), so parallel runs are slower than estimated.
+
+## Competition facts (from the Kaggle pages, 2026-10-07)
+
+- Score = mean over PA, FL, MT of MAE / tolerance, tolerances PA 6 deg,
+  FL 12 mm, MT 3 mm (official `paulritsche/umud-score` notebook); MedAE and
+  RMSE only break ties. Lower is better.
+- Test ranges: PA 5-45 deg, FL 30-200 mm, MT 10-50 mm.
+- Test labels: two raters, 3 fascicles / 3 PAs / 3 MTs per image, averaged;
+  FL extrapolated linearly between aponeuroses when the fascicle leaves the
+  frame; MT is the perpendicular distance at three locations across the width.
+- Test devices: Siemens Acuson Juniper, Telemed ArtUS EXT-1H, Philips Lumify;
+  test subjects are not in the training set; some test images are 5-frame
+  video runs. Deadline 2026-11-14; 5 submissions per day.
+- Prize eligibility needs an open-source (OSI licence), FAIR, reproducible
+  repository.
+
+## Calibration (pixels -> mm)
+
+Every test layout draws a ruler; `src/umud/calibration.py` reads it per image
+(`scripts/calibrate_images.py` prints the table):
+
+| Layout | Images | px/mm | Source |
+|---|---|---|---|
+| Telemed 1200x800 screens | 90 | x 13.4, y 14.8 (stretched) | left depth ruler + bottom lateral ruler, 10 mm ticks |
+| Telemed 1088x644 screens | 50 | 12.6 (square) | same rulers, unscaled |
+| Telemed crops 853x1069 / 513x465 | 12 / 8 | 16.7 / 7.8 | bottom lateral ruler, 10 mm ticks (assumed) |
+| Siemens Juniper 1200x800 | 91 | 8.7-16.0 by depth (3-7 cm) | right depth ruler; 2 mm ticks at 3 cm, 5 mm from 3.5 cm, resolved via the 12L3 probe's ~57 mm width |
+| Philips Lumify 1200x800 PNG | 58 | 12.0-20.1 by depth (3-5 cm) | left depth ruler, 5 mm ticks |
+
+All values fall on the scanners' discrete depth settings. Assumptions: square
+pixels for Siemens, Lumify and crops (no lateral ruler), and 10 mm per tick on
+crop rulers.
 
 ## Code changes
 
@@ -94,6 +139,12 @@ the LZW TIFFs (~100 ms/image/core).
 4. **Mask overlays** (`scripts/visualize_fascicles.py`, `src/umud/viz.py`):
    grids of ground truth (green) and/or predictions (magenta) over images,
    for train/val/test, with per-image segment counts and median angles.
+5. **Calibration and mm measurements**: `src/umud/calibration.py`,
+   `scripts/calibrate_images.py`; geometry converts pixel coordinates to mm
+   with separate x/y scales before fitting lines; muscle thickness is now the
+   mean perpendicular distance at 25/50/75% of the shared aponeurosis width;
+   `predict.py` calibrates each image, writes a diagnostics CSV and clips to
+   the published test ranges; `kaggle/runs/predict.sh` runs prediction only.
 
 ## Decisions
 
@@ -105,13 +156,20 @@ the LZW TIFFs (~100 ms/image/core).
 - Flip TTA only for models trained with flips (the run-2 apo model was not).
 - Local CPU work is limited to smoke tests; no local training on random
   weights beyond that (user request).
+- Measure in physical mm with per-axis scales (the stretched Telemed
+  screens would otherwise skew angles by ~1 deg and lengths by up to 10%).
+- Clip predictions to the published test ranges: it can only reduce error
+  for truths inside those ranges.
 
 ## Open issues
 
-- `pixel_to_mm` calibration is unknown, so `fl_mm`/`mt_mm` are in pixels.
-- The competition's scoring formula is unconfirmed.
-- Validation split is random per image; frames from the same subject or
-  video may sit on both sides, which would make validation optimistic.
+- Calibration assumptions above are unverified against labels; the first
+  leaderboard submission will show whether FL/MT are in the right range.
+- Validation split is leaky (duplicates); a split that groups near-duplicate
+  frames is needed before comparing fascicle models further.
+- The apo model (run 2) was trained with the original nearest-neighbour
+  mask resizing and selected by Dice; MT has the tightest tolerance (3 mm),
+  so it is the next model to revisit.
 - Only the fascicle angle can be validated locally; fascicle length and
   muscle thickness have no ground truth in the training data.
 - Hugging Face token added by the user is not visible in this session (it
