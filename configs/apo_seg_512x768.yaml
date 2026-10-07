@@ -1,0 +1,22 @@
+# Aponeurosis model at 512x768 (2:3, the aspect of most frames), trained on
+# the grouped split (no near-duplicate leakage) and selected by validation
+# muscle-thickness error rather than Dice.
+arch: Unet
+image_size: [512, 768]
+encoder: resnet34
+num_classes: 1
+line_px: 0
+batch_size: 8
+lr: 0.0003
+scheduler: cosine
+warmup_epochs: 1
+epochs: 60
+early_stopping_patience: 12
+select_metric: mt_rel_err
+split: grouped
+amp: true
+cache: true
+flip: true
+num_workers: 2
+seed: 42
+val_frac: 0.15

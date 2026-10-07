@@ -21,5 +21,5 @@ python scripts/predict.py --apo-checkpoint "$apo" --apo-config configs/apo_seg.y
     --fasc-checkpoint "$fasc" --fasc-config "$FASC_CONFIG"
 cp "$(ls submissions/submission_*.csv | tail -1)" "$OUT/submission.csv"
 cp "$(ls submissions/diagnostics_*.csv | tail -1)" "$OUT/diagnostics.csv"
-python scripts/visualize_fascicles.py --source test --checkpoint "$fasc" --config "$FASC_CONFIG" \
+python scripts/visualize_masks.py --pool fasc --source test --checkpoint "$fasc" --config "$FASC_CONFIG" \
     --n 12 --out "$OUT/viz/fasc_test.png"

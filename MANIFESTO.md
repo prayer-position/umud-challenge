@@ -63,6 +63,7 @@ private to the `charlesdidier` account.
 | 1 | `charlesdidier/umud-unet-smoke` | Original pipeline, 1 epoch each, T4 | Pipeline works end to end on Kaggle (~5 min). Dice: apo 0.17, fasc 0.009 |
 | 2 | `charlesdidier/umud-unet-train` | Original pipeline, 30 epochs each, 512x512, ~1 h 50 min | Best val Dice: **apo 0.821** (epoch 25, plateau from ~20), **fasc 0.318** (epoch 30, still creeping up). Outputs: `apo_best.pt`, `fasc_best.pt`, `submission.csv` |
 | 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline (`kaggle/runs/fasc_experiments.sh`): 512x768 vs 768x1152 in parallel on 2x T4; baseline scored on the same val split; submission + overlays from the best. ~2 h 50 min | Val angle MAE / p90 / Dice (flip TTA): **768x1152 0.73 / 1.48 deg / 0.649** (early-stopped at 37, best epoch 27), 512x768 0.75 / 1.50 / 0.634 (stopped at 39, best 29), baseline 0.74 / 1.65 / 0.318. Dice doubled; angle error is tied at the ~1 deg label-noise floor of a leaky split, so it cannot rank them. Submission still uncalibrated (pixels) |
+| 5 | `charlesdidier/umud-grouped-v1` | `kaggle/runs/grouped_v1.sh`: both models retrained on the grouped split in parallel: apo 512x768 (GPU 0, selected by thickness error), fasc 768x1152 (GPU 1, selected by angle error); scored with flip TTA; run-2 apo scored on the same split for reference; calibrated submission from the two new models; apo and fasc overlays | Running |
 | 4 | `charlesdidier/umud-predict-v1` | `kaggle/runs/predict.sh`: no training; run-2 apo + run-3 768x1152 fasc, per-image calibration, measurements in mm, clipped to published ranges. ~5 min | All 309 calibrated. Raw medians per layout: PA 10.5-19.4 deg, FL 66-129 mm, MT 18-28 mm; only 2% of Lumify FL fell outside the published ranges (clipped). Outputs: `submission.csv`, `diagnostics.csv`, `calibration.csv`, `viz/fasc_test.png` |
 
 Training speed in run 2: ~22 img/s (fp32, one T4); validation (forward
@@ -116,7 +117,7 @@ crop rulers.
    - Training: mixed precision, cosine LR with warmup, early stopping,
      horizontal flips, in-memory cache of decoded images, per-run
      checkpoint names (`--run-name`) and `*_history.json` metric logs.
-   - New validation metric (`src/umud/evaluation.py`, `scripts/eval_fasc.py`):
+   - New validation metric (`src/umud/evaluation.py`, `scripts/eval_fasc.py`, later `scripts/eval_model.py`):
      per image, |median predicted - median ground-truth fascicle angle|,
      measured on the native label canvas so it is comparable across
      resolutions; misses count as 45 deg. Fascicle checkpoints are selected
@@ -136,7 +137,7 @@ crop rulers.
    push, every script path was smoke-tested locally (inference only) and the
    run script's control flow was dry-run with stubbed commands, which caught
    a bug that would have crashed the best-model selection.
-4. **Mask overlays** (`scripts/visualize_fascicles.py`, `src/umud/viz.py`):
+4. **Mask overlays** (`scripts/visualize_fascicles.py`, later `scripts/visualize_masks.py`, `src/umud/viz.py`):
    grids of ground truth (green) and/or predictions (magenta) over images,
    for train/val/test, with per-image segment counts and median angles.
 5. **Calibration and mm measurements**: `src/umud/calibration.py`,
@@ -154,6 +155,15 @@ crop rulers.
    image having a > 0.95 twin in training (random split: 75% fascicle, 22%
    apo). Clusters are cached in `outputs/cache/`. The default stays `random`
    so earlier results remain comparable.
+7. **Aponeurosis metric and shared tooling**: `ApoThicknessEvaluator`
+   (`src/umud/evaluation.py`) scores muscle thickness from predicted vs
+   ground-truth masks as a relative error on the native label canvas (no
+   calibration needed) plus the deep-aponeurosis angle error;
+   `select_metric: mt_rel_err` picks apo checkpoints by it. `eval_fasc.py`
+   became `scripts/eval_model.py --pool apo|fasc` and
+   `visualize_fascicles.py` became `scripts/visualize_masks.py --pool
+   apo|fasc` (apo captions show thickness and deep angle). Configs
+   `configs/apo_seg_512x768.yaml` and `configs/fasc_seg_768x1152_grouped.yaml`.
 
 ## Decisions
 

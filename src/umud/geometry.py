@@ -118,6 +118,13 @@ def _aponeurosis_lines(apo_mask: np.ndarray, px_per_mm: Scale) -> list[tuple[np.
     return [_fit_line(c) for c in _aponeurosis_components(apo_mask, px_per_mm)]
 
 
+def deep_aponeurosis_angle(apo_mask: np.ndarray, px_per_mm: Scale = (1.0, 1.0)) -> float:
+    """Angle of the deep aponeurosis against the image horizontal (see
+    `line_angle_deg`), or NaN without two aponeurosis components."""
+    lines = _aponeurosis_lines(apo_mask, px_per_mm)
+    return line_angle_deg(lines[-1][1]) if len(lines) == 2 else float("nan")
+
+
 def measure_thickness(apo_mask: np.ndarray, px_per_mm: Scale = (1.0, 1.0)) -> float:
     """Muscle thickness: perpendicular distance from the deep aponeurosis to
     the superficial one, averaged over three points (25/50/75%) across the

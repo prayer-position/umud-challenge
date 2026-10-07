@@ -12,8 +12,13 @@ from umud.data.dataset import MaskDataset
 from umud.data.splits import split_indices
 from umud.data.transforms import build_train_transform, build_val_transform
 from umud.engine import DiceBCELoss, evaluate, save_checkpoint, train_one_epoch
-from umud.evaluation import FascicleAngleEvaluator
+from umud.evaluation import ApoThicknessEvaluator, FascicleAngleEvaluator
 from umud.models.unet import build_model_from_config
+
+# Metrics that need a dedicated evaluator; all are lower-is-better.
+EVALUATORS = {"angle_mae": FascicleAngleEvaluator, "mt_rel_err": ApoThicknessEvaluator}
+# Extra per-epoch log fields per evaluator metric.
+LOG_FIELDS = {"angle_mae": ("angle_mae", "miss_rate"), "mt_rel_err": ("mt_rel_err", "deep_angle_err", "miss_rate")}
 
 POOL_DIRS = {
     "apo": (schema.APO_IMAGE_DIR, schema.APO_MASK_DIR),
@@ -30,7 +35,8 @@ POOL_DIRS = {
 #   scheduler: none             "cosine": cosine LR decay with linear warmup
 #   warmup_epochs: 1
 #   early_stopping_patience: null
-#   select_metric: dice         "angle_mae": pick the checkpoint by fascicle angle error
+#   select_metric: dice         "angle_mae": fascicle angle error, "mt_rel_err": thickness
+#                               error (see evaluation.py); lower is better for both
 #   split: random               "grouped": keep near-duplicate frames on one side (data/splits.py)
 
 
@@ -71,7 +77,7 @@ def run_training(
     t0 = time.time()
     train_ds = MaskDataset(image_dir, mask_dir, image_size, train_tf, line_px=line_px, indices=train_idx, cache=cache)
     val_ds = MaskDataset(image_dir, mask_dir, image_size, val_tf, line_px=line_px, indices=val_idx, cache=cache)
-    angle_evaluator = FascicleAngleEvaluator(val_ds) if select_metric == "angle_mae" else None
+    evaluator = EVALUATORS[select_metric](val_ds) if select_metric in EVALUATORS else None
     print(f"[{run_name}] data ready in {time.time() - t0:.0f}s ({len(train_ds)} train / {len(val_ds)} val)")
 
     train_loader = DataLoader(
@@ -110,22 +116,20 @@ def run_training(
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, device, scaler)
         metrics = evaluate(model, val_loader, loss_fn, device, amp=amp)
-        if angle_evaluator is not None:
-            metrics.update(angle_evaluator(model, device, batch_size=config["batch_size"]))
+        if evaluator is not None:
+            metrics.update(evaluator(model, device, batch_size=config["batch_size"]))
         if scheduler is not None:
             scheduler.step()
 
-        # Higher is better for dice, lower for angle error.
-        score = -metrics["angle_mae"] if select_metric == "angle_mae" else metrics["dice"]
+        # Higher is better for dice, lower for the evaluator metrics.
+        score = metrics["dice"] if select_metric == "dice" else -metrics[select_metric]
         improved = score > best_score
         if improved:
             best_score, best_epoch = score, epoch
             save_checkpoint(model, checkpoint_path)
 
         history.append({"epoch": epoch, "train_loss": train_loss, **metrics, "seconds": time.time() - t0})
-        extra = ""
-        if angle_evaluator is not None:
-            extra = f" angle_mae={metrics['angle_mae']:.2f} miss={metrics['miss_rate']:.3f}"
+        extra = "".join(f" {k}={metrics[k]:.4f}" for k in LOG_FIELDS.get(select_metric, ()))
         print(
             f"[{run_name}] epoch {epoch}/{n_epochs} "
             f"train_loss={train_loss:.4f} val_loss={metrics['loss']:.4f} "

@@ -24,7 +24,7 @@ for i in "${!EXPERIMENTS[@]}"; do
         > "$OUT/logs/train_$name.log" 2>&1 &
     pids+=($!)
 done
-CUDA_VISIBLE_DEVICES=0 python scripts/eval_fasc.py --config configs/fasc_seg.yaml \
+CUDA_VISIBLE_DEVICES=0 python scripts/eval_model.py --pool fasc --config configs/fasc_seg.yaml \
     --checkpoint outputs/checkpoints/fasc_baseline_best.pt --out "$OUT/eval/fasc_baseline.json" \
     > "$OUT/logs/eval_fasc_baseline.log" 2>&1
 for i in "${!pids[@]}"; do
@@ -38,7 +38,7 @@ cp outputs/checkpoints/*_history.json "$OUT/history/" 2>/dev/null
 # Final scores with flip TTA, on the same validation split as the baseline.
 for name in "${EXPERIMENTS[@]}"; do
     [ -f "outputs/checkpoints/${name}_best.pt" ] || continue
-    python scripts/eval_fasc.py --config "configs/$name.yaml" --checkpoint "outputs/checkpoints/${name}_best.pt" \
+    python scripts/eval_model.py --pool fasc --config "configs/$name.yaml" --checkpoint "outputs/checkpoints/${name}_best.pt" \
         --out "$OUT/eval/$name.json" > "$OUT/logs/eval_$name.log" 2>&1 || echo "eval $name FAILED"
 done
 best=$(python - "$OUT/eval" <<'PY'
@@ -65,9 +65,9 @@ for name in "${EXPERIMENTS[@]}"; do
     [ -f "outputs/checkpoints/${name}_best.pt" ] && cp "outputs/checkpoints/${name}_best.pt" "$OUT/"
 done
 
-python scripts/visualize_fascicles.py --source val --checkpoint "$best_ckpt" --config "$best_config" \
+python scripts/visualize_masks.py --pool fasc --source val --checkpoint "$best_ckpt" --config "$best_config" \
     --n 12 --out "$OUT/viz/fasc_val_${best}.png"
-python scripts/visualize_fascicles.py --source val --checkpoint outputs/checkpoints/fasc_baseline_best.pt \
+python scripts/visualize_masks.py --pool fasc --source val --checkpoint outputs/checkpoints/fasc_baseline_best.pt \
     --config configs/fasc_seg.yaml --n 12 --out "$OUT/viz/fasc_val_baseline.png"
-python scripts/visualize_fascicles.py --source test --checkpoint "$best_ckpt" --config "$best_config" \
+python scripts/visualize_masks.py --pool fasc --source test --checkpoint "$best_ckpt" --config "$best_config" \
     --n 12 --out "$OUT/viz/fasc_test_${best}.png"
