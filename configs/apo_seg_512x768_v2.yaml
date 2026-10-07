@@ -1,0 +1,24 @@
+# Aponeurosis model at 512x768 on the grouped split, second attempt. v1
+# (apo_seg_512x768.yaml: lr 3e-4, cosine over 60 epochs, early stopping on
+# the noisy thickness metric) stopped at epoch 28 and kept an epoch-16
+# checkpoint taken before the LR had decayed. Here the run-2 LR is used and
+# the cosine schedule runs to completion; the best thickness-error epoch is
+# kept.
+arch: Unet
+image_size: [512, 768]
+encoder: resnet34
+num_classes: 1
+line_px: 0
+batch_size: 8
+lr: 0.0001
+scheduler: cosine
+warmup_epochs: 1
+epochs: 40
+select_metric: mt_rel_err
+split: grouped
+amp: true
+cache: true
+flip: true
+num_workers: 2
+seed: 42
+val_frac: 0.15

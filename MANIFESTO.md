@@ -8,10 +8,10 @@ private to the `charlesdidier` account.
 
 | Item | State |
 |---|---|
-| Aponeurosis model | Trained (Kaggle run 2): val Dice 0.821 |
-| Fascicle model | Run 3, 768x1152: val Dice 0.649 (baseline 0.318); angle error tied with baseline at the label-noise floor |
+| Aponeurosis model | Run 2 still best; run-5 retrain underperformed, run 6 retries |
+| Fascicle model | Run 5 (grouped split, 768x1152): honest val angle error 1.02 deg mean, 0.66 deg median |
 | Calibration | Per-image px/mm from on-screen rulers, all 309 test images (`src/umud/calibration.py`) |
-| Submission | Run 4 `submission.csv` (calibrated, mm, in published ranges) is ready on the notebook's Output tab; **nothing uploaded to the competition yet** |
+| Submission | Best so far: run 4 `submission.csv` (run-2 apo + run-3 fasc, calibrated); run 6 will produce one from honestly validated models. **Nothing uploaded to the competition yet** |
 | Competition metric | Confirmed: mean of MAE/tolerance with tolerances PA 6 deg, FL 12 mm, MT 3 mm |
 
 ## Environment and access (2026-10-07)
@@ -63,7 +63,8 @@ private to the `charlesdidier` account.
 | 1 | `charlesdidier/umud-unet-smoke` | Original pipeline, 1 epoch each, T4 | Pipeline works end to end on Kaggle (~5 min). Dice: apo 0.17, fasc 0.009 |
 | 2 | `charlesdidier/umud-unet-train` | Original pipeline, 30 epochs each, 512x512, ~1 h 50 min | Best val Dice: **apo 0.821** (epoch 25, plateau from ~20), **fasc 0.318** (epoch 30, still creeping up). Outputs: `apo_best.pt`, `fasc_best.pt`, `submission.csv` |
 | 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline (`kaggle/runs/fasc_experiments.sh`): 512x768 vs 768x1152 in parallel on 2x T4; baseline scored on the same val split; submission + overlays from the best. ~2 h 50 min | Val angle MAE / p90 / Dice (flip TTA): **768x1152 0.73 / 1.48 deg / 0.649** (early-stopped at 37, best epoch 27), 512x768 0.75 / 1.50 / 0.634 (stopped at 39, best 29), baseline 0.74 / 1.65 / 0.318. Dice doubled; angle error is tied at the ~1 deg label-noise floor of a leaky split, so it cannot rank them. Submission still uncalibrated (pixels) |
-| 5 | `charlesdidier/umud-grouped-v1` | `kaggle/runs/grouped_v1.sh`: both models retrained on the grouped split in parallel: apo 512x768 (GPU 0, selected by thickness error), fasc 768x1152 (GPU 1, selected by angle error); scored with flip TTA; run-2 apo scored on the same split for reference; calibrated submission from the two new models; apo and fasc overlays | Running |
+| 5 | `charlesdidier/umud-grouped-v1` | `kaggle/runs/grouped_v1.sh`: both models retrained on the grouped split in parallel: apo 512x768 (GPU 0, lr 3e-4, cosine over 60, early stopping on thickness error), fasc 768x1152 (GPU 1, selected by angle error); scored with flip TTA; run-2 apo scored on the same split for reference; calibrated submission; overlays. ~2 h 4 min | Grouped val, mean / median / p90. **Fasc**: angle error 1.02 / 0.66 / 2.21 deg, Dice 0.560 (stopped at 26, best 16); first honest fascicle number (run 3's 0.73 was inflated by leakage). **Apo v1: worse than run 2**: thickness rel. error 3.4% / 0.57% / 6.4%, deep-angle error 0.55 deg, Dice 0.772, vs run 2 2.0% / 0.31% / 0.9%, 0.20 deg, 0.852 (run 2 saw ~22% of these images, but the p90 gap is too large for that alone). The thickness metric jumped 3.5-8% between epochs, early stopping kept epoch 16 of 28 before the LR had decayed. Its submission also missed MT on 5 test images; **do not use this run's submission** |
+| 6 | `charlesdidier/umud-apo-v2` | `kaggle/runs/apo_v2.sh`: GPU 0 the exact run-2 apo recipe on the grouped split (honest baseline); GPU 1 apo 512x768 at lr 1e-4, cosine over 40 epochs run to completion, no early stopping, best thickness-error epoch kept. All apo models scored on grouped val; submission from the best grouped-trained apo + run-5 fasc | Running |
 | 4 | `charlesdidier/umud-predict-v1` | `kaggle/runs/predict.sh`: no training; run-2 apo + run-3 768x1152 fasc, per-image calibration, measurements in mm, clipped to published ranges. ~5 min | All 309 calibrated. Raw medians per layout: PA 10.5-19.4 deg, FL 66-129 mm, MT 18-28 mm; only 2% of Lumify FL fell outside the published ranges (clipped). Outputs: `submission.csv`, `diagnostics.csv`, `calibration.csv`, `viz/fasc_test.png` |
 
 Training speed in run 2: ~22 img/s (fp32, one T4); validation (forward
@@ -179,6 +180,9 @@ crop rulers.
   screens would otherwise skew angles by ~1 deg and lengths by up to 10%).
 - Clip predictions to the published test ranges: it can only reduce error
   for truths inside those ranges.
+- Don't early-stop on the per-epoch thickness metric: it is driven by a few
+  images per epoch and too noisy; let the LR schedule finish and keep the
+  best epoch instead.
 
 ## Open issues
 

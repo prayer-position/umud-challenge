@@ -1,0 +1,12 @@
+# The run-2 aponeurosis recipe (configs/apo_seg.yaml) unchanged except for
+# the grouped split, as an honest baseline on leak-free validation.
+image_size: [512, 512]
+encoder: resnet34
+num_classes: 1
+batch_size: 8
+lr: 0.0001
+epochs: 30
+num_workers: 2
+seed: 42
+val_frac: 0.15
+split: grouped
