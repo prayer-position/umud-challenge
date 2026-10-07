@@ -17,7 +17,7 @@ from umud.data.transforms import build_val_transform
 from umud.engine import DiceBCELoss, evaluate
 from umud.evaluation import FascicleAngleEvaluator
 from umud.inference import load_model
-from umud.train_pipeline import split_indices
+from umud.data.splits import split_indices
 
 
 def main() -> None:
@@ -31,7 +31,7 @@ def main() -> None:
     config = utils.load_config(args.config)
     device = utils.get_device()
     image_size = tuple(config["image_size"])
-    _, val_idx = split_indices(len(schema.list_image_files(schema.FASC_IMAGE_DIR)), config)
+    _, val_idx = split_indices(schema.FASC_IMAGE_DIR, config)
     val_ds = MaskDataset(
         schema.FASC_IMAGE_DIR,
         schema.FASC_MASK_DIR,

@@ -19,7 +19,7 @@ from umud.data import schema
 from umud.data.dataset import binarize_mask, load_image, load_mask
 from umud.geometry import fascicle_angles
 from umud.inference import load_model, predict_mask
-from umud.train_pipeline import split_indices
+from umud.data.splits import split_indices
 from umud.viz import grid, overlay, save_rgb
 
 
@@ -39,7 +39,7 @@ def main() -> None:
         paths = schema.list_image_files(schema.TEST_IMAGE_DIR)
     else:
         paths = schema.list_image_files(schema.FASC_IMAGE_DIR)
-        train_idx, val_idx = split_indices(len(paths), config)
+        train_idx, val_idx = split_indices(schema.FASC_IMAGE_DIR, config)
         paths = [paths[i] for i in (val_idx if args.source == "val" else train_idx)]
     paths = random.Random(args.seed).sample(paths, min(args.n, len(paths)))
 

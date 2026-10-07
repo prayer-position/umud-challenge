@@ -4,12 +4,12 @@ import time
 from pathlib import Path
 
 import torch
-from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 
 from umud import utils
 from umud.data import schema
 from umud.data.dataset import MaskDataset
+from umud.data.splits import split_indices
 from umud.data.transforms import build_train_transform, build_val_transform
 from umud.engine import DiceBCELoss, evaluate, save_checkpoint, train_one_epoch
 from umud.evaluation import FascicleAngleEvaluator
@@ -31,14 +31,7 @@ POOL_DIRS = {
 #   warmup_epochs: 1
 #   early_stopping_patience: null
 #   select_metric: dice         "angle_mae": pick the checkpoint by fascicle angle error
-
-
-def split_indices(n_total: int, config: dict, subset: int | None = None) -> tuple[list[int], list[int]]:
-    indices = list(range(n_total))
-    if subset is not None:
-        indices = indices[:subset]
-    train_idx, val_idx = train_test_split(indices, test_size=config["val_frac"], random_state=config["seed"])
-    return train_idx, val_idx
+#   split: random               "grouped": keep near-duplicate frames on one side (data/splits.py)
 
 
 def _cosine_with_warmup(optimizer, warmup_epochs: int, total_epochs: int):
@@ -74,7 +67,7 @@ def run_training(
     train_tf = build_train_transform(image_size, enable_flip=config.get("flip", False))
     val_tf = build_val_transform(image_size)
 
-    train_idx, val_idx = split_indices(len(schema.list_image_files(image_dir)), config, subset)
+    train_idx, val_idx = split_indices(image_dir, config, subset)
     t0 = time.time()
     train_ds = MaskDataset(image_dir, mask_dir, image_size, train_tf, line_px=line_px, indices=train_idx, cache=cache)
     val_ds = MaskDataset(image_dir, mask_dir, image_size, val_tf, line_px=line_px, indices=val_idx, cache=cache)

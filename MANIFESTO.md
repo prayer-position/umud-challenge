@@ -11,7 +11,7 @@ private to the `charlesdidier` account.
 | Aponeurosis model | Trained (Kaggle run 2): val Dice 0.821 |
 | Fascicle model | Run 3, 768x1152: val Dice 0.649 (baseline 0.318); angle error tied with baseline at the label-noise floor |
 | Calibration | Per-image px/mm from on-screen rulers, all 309 test images (`src/umud/calibration.py`) |
-| Submission | Run 4 (calibrated, mm) pending; **nothing uploaded to the competition yet** |
+| Submission | Run 4 `submission.csv` (calibrated, mm, in published ranges) is ready on the notebook's Output tab; **nothing uploaded to the competition yet** |
 | Competition metric | Confirmed: mean of MAE/tolerance with tolerances PA 6 deg, FL 12 mm, MT 3 mm |
 
 ## Environment and access (2026-10-07)
@@ -63,7 +63,7 @@ private to the `charlesdidier` account.
 | 1 | `charlesdidier/umud-unet-smoke` | Original pipeline, 1 epoch each, T4 | Pipeline works end to end on Kaggle (~5 min). Dice: apo 0.17, fasc 0.009 |
 | 2 | `charlesdidier/umud-unet-train` | Original pipeline, 30 epochs each, 512x512, ~1 h 50 min | Best val Dice: **apo 0.821** (epoch 25, plateau from ~20), **fasc 0.318** (epoch 30, still creeping up). Outputs: `apo_best.pt`, `fasc_best.pt`, `submission.csv` |
 | 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline (`kaggle/runs/fasc_experiments.sh`): 512x768 vs 768x1152 in parallel on 2x T4; baseline scored on the same val split; submission + overlays from the best. ~2 h 50 min | Val angle MAE / p90 / Dice (flip TTA): **768x1152 0.73 / 1.48 deg / 0.649** (early-stopped at 37, best epoch 27), 512x768 0.75 / 1.50 / 0.634 (stopped at 39, best 29), baseline 0.74 / 1.65 / 0.318. Dice doubled; angle error is tied at the ~1 deg label-noise floor of a leaky split, so it cannot rank them. Submission still uncalibrated (pixels) |
-| 4 | `charlesdidier/umud-predict-v1` | `kaggle/runs/predict.sh`: no training; run-2 apo + run-3 768x1152 fasc, per-image calibration, measurements in mm, clipped to published ranges | Pending |
+| 4 | `charlesdidier/umud-predict-v1` | `kaggle/runs/predict.sh`: no training; run-2 apo + run-3 768x1152 fasc, per-image calibration, measurements in mm, clipped to published ranges. ~5 min | All 309 calibrated. Raw medians per layout: PA 10.5-19.4 deg, FL 66-129 mm, MT 18-28 mm; only 2% of Lumify FL fell outside the published ranges (clipped). Outputs: `submission.csv`, `diagnostics.csv`, `calibration.csv`, `viz/fasc_test.png` |
 
 Training speed in run 2: ~22 img/s (fp32, one T4); validation (forward
 only) ~44 img/s, so fp32 compute was the bottleneck, followed by decoding
@@ -145,6 +145,15 @@ crop rulers.
    mean perpendicular distance at 25/50/75% of the shared aponeurosis width;
    `predict.py` calibrates each image, writes a diagnostics CSV and clips to
    the published test ranges; `kaggle/runs/predict.sh` runs prediction only.
+6. **Grouped validation split** (`src/umud/data/splits.py`, config
+   `split: grouped`): clusters near-duplicate frames (thumbnail correlation
+   > 0.95, transitive) and moves whole clusters to validation until it holds
+   `val_frac` of the images, skipping clusters larger than half that target
+   (one fascicle cluster has 657 images). Result: fascicle 2346/415 and apo
+   890/158 train/val (same sizes as the random split) with no validation
+   image having a > 0.95 twin in training (random split: 75% fascicle, 22%
+   apo). Clusters are cached in `outputs/cache/`. The default stays `random`
+   so earlier results remain comparable.
 
 ## Decisions
 
@@ -165,8 +174,8 @@ crop rulers.
 
 - Calibration assumptions above are unverified against labels; the first
   leaderboard submission will show whether FL/MT are in the right range.
-- Validation split is leaky (duplicates); a split that groups near-duplicate
-  frames is needed before comparing fascicle models further.
+- Earlier validation numbers (runs 2-3) come from the leaky random split;
+  new experiments should use `split: grouped`.
 - The apo model (run 2) was trained with the original nearest-neighbour
   mask resizing and selected by Dice; MT has the tightest tolerance (3 mm),
   so it is the next model to revisit.
