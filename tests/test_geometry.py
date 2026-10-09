@@ -157,3 +157,11 @@ def test_thickness_ignores_oblique_fascicle_lines_in_apo_mask():
     mask = _band(shape, 40, 0, 400) | _band(shape, 250, 0, 400)
     mask |= _line_mask(shape, 160, 60, 90, 330)  # ~15 degrees, 2/3 of the width
     assert abs(measure_thickness(mask) - 210) < 2
+
+
+def test_thickness_falls_back_to_largest_when_one_aponeurosis_is_short():
+    # The superficial aponeurosis only spans 30% of the width: the topmost
+    # rule's span filter drops it, so the two largest components are used.
+    shape = (300, 400)
+    mask = _band(shape, 50, 0, 120) | _band(shape, 200, 0, 400)
+    assert abs(measure_thickness(mask) - 150) < 3

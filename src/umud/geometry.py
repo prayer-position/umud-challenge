@@ -186,6 +186,10 @@ def _aponeurosis_pair(
         if len(groups) >= 2:
             deep = next((k for k in range(1, len(groups)) if rows[k] - rows[0] >= APO_MIN_GAP * height_mm), 1)
             groups = [groups[0], groups[deep]]
+        elif len(regions) >= 2:
+            # Only one structure passed the filters (e.g. the other aponeurosis
+            # came out short or fragmented): fall back to the two largest.
+            return _aponeurosis_pair(apo_mask, px_per_mm, rule="largest", edge=edge)
 
     groups = sorted(groups, key=lambda g: g[:, 0].mean())
     pair = []

@@ -11,6 +11,7 @@ from umud.data import schema
 from umud.data.dataset import is_png, load_image
 from umud.geometry import fascicle_lines, measure_fascicle, measure_thickness
 from umud.inference import ensemble_mask, load_members
+from umud.maskdump import encode_line
 
 # Ranges the organizers give for the test set (data description): clipping to
 # them can only move a prediction closer to a truth that lies inside.
@@ -35,6 +36,11 @@ def main() -> None:
     parser.add_argument("--apo", nargs=2, action="append", required=True, metavar=("CHECKPOINT", "CONFIG"))
     parser.add_argument("--fasc", nargs=2, action="append", required=True, metavar=("CHECKPOINT", "CONFIG"))
     parser.add_argument("--no-clip", action="store_true", help="Don't clip predictions to the published test ranges.")
+    parser.add_argument(
+        "--dump-log",
+        action="store_true",
+        help="Print the diagnostics table and every predicted mask (compressed) to stdout; see maskdump.py.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N test images (smoke test).")
     parser.add_argument("--no-tta", action="store_true", help="Disable horizontal-flip test-time augmentation (used for models trained with flip: true).")
     args = parser.parse_args()
@@ -59,6 +65,9 @@ def main() -> None:
         fasc_mask = ensemble_mask(fasc_members, image, device, tta=not args.no_tta)
 
         rows.append({"image_id": path.name, "cal": cal, "apo_mask": apo_mask, "fasc_mask": fasc_mask})
+        if args.dump_log:
+            print(encode_line(path.name, "apo", apo_mask))
+            print(encode_line(path.name, "fasc", fasc_mask))
 
     # Images whose ruler wasn't recognised get the median calibration of the
     # images with the same size, else of all images.
@@ -153,6 +162,9 @@ def main() -> None:
     submission.to_csv(out_path, sep=schema.SUBMISSION_SEP, index=False, encoding=schema.SUBMISSION_ENCODING)
     check_submission_file(out_path, [p.name for p in test_files])
     diag.to_csv(out_path.with_name(f"diagnostics_{timestamp}.csv"), index=False)
+    if args.dump_log:
+        for line in diag.to_csv(index=False).splitlines():
+            print(f"DIAG {line}")
     print(f"Wrote {out_path} ({len(submission)} rows) and its diagnostics CSV")
 
 

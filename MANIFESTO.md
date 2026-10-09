@@ -65,7 +65,8 @@ private to the `charlesdidier` account.
 | 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline (`kaggle/runs/fasc_experiments.sh`): 512x768 vs 768x1152 in parallel on 2x T4; baseline scored on the same val split; submission + overlays from the best. ~2 h 50 min | Val angle MAE / p90 / Dice (flip TTA): **768x1152 0.73 / 1.48 deg / 0.649** (early-stopped at 37, best epoch 27), 512x768 0.75 / 1.50 / 0.634 (stopped at 39, best 29), baseline 0.74 / 1.65 / 0.318. Dice doubled; angle error is tied at the ~1 deg label-noise floor of a leaky split, so it cannot rank them. Submission still uncalibrated (pixels) |
 | 5 | `charlesdidier/umud-grouped-v1` | `kaggle/runs/grouped_v1.sh`: both models retrained on the grouped split in parallel: apo 512x768 (GPU 0, lr 3e-4, cosine over 60, early stopping on thickness error), fasc 768x1152 (GPU 1, selected by angle error); scored with flip TTA; run-2 apo scored on the same split for reference; calibrated submission; overlays. ~2 h 4 min | Grouped val, mean / median / p90. **Fasc**: angle error 1.02 / 0.66 / 2.21 deg, Dice 0.560 (stopped at 26, best 16); first honest fascicle number (run 3's 0.73 was inflated by leakage). **Apo v1: worse than run 2**: thickness rel. error 3.4% / 0.57% / 6.4%, deep-angle error 0.55 deg, Dice 0.772, vs run 2 2.0% / 0.31% / 0.9%, 0.20 deg, 0.852 (run 2 saw ~22% of these images; run 6 showed the gap is mostly that leakage, contrary to what was first written here). The thickness metric jumped 3.5-8% between epochs, early stopping kept epoch 16 of 28 before the LR had decayed. Its submission also missed MT on 5 test images; **do not use this run's submission** |
 | 4b | `charlesdidier/umud-predict-v1` (version 2) | Run 4 again (same models, same predictions) with the comma-separated submission format | Done; `submission.csv` passed the Kaggle-style format check; only CSV at the top of the output (`extras/` holds calibration and diagnostics). Per-layout medians identical to run 4 |
-| 7 | `charlesdidier/umud-ensemble-v1` | `kaggle/runs/ensemble_v1.sh`: GPU 1 trains fasc 512x768 on the grouped split; GPU 0 scores grouped-trained apo models and ensembles with both pairing rules and edge conventions, listing the worst images; then fascicle singles vs ensemble; test predictions with the new pairing rule and the ensembles that beat their members; variant submissions in `probes/` | Running |
+| 8 | `charlesdidier/umud-predict-v2` | `kaggle/runs/predict_v2.sh`: no training; apo = run2 + grouped + v1 + v2, fasc = 512x768 grouped + run-3 512x768; topmost pairing with fallback; prints diagnostics and every predicted mask to the log (`--dump-log`) for local overlays | Running |
+| 7 | `charlesdidier/umud-ensemble-v1` | `kaggle/runs/ensemble_v1.sh`: GPU 1 trains fasc 512x768 on the grouped split; GPU 0 scores grouped-trained apo models and ensembles with both pairing rules and edge conventions, listing the worst images; then fascicle singles vs ensemble; test predictions; variant submissions in `probes/`. ~87 min | Grouped val, thickness rel. error mean / p90 (old rule -> topmost): run-2 recipe 3.69/4.2% -> **3.29/3.1%**; v1 3.44/6.4% -> **2.91/2.9%**; v2 3.35/5.9% -> 3.12/2.4%; ensemble g+v1+v2 3.27/3.6% -> **2.83/2.1%**. Inner edges are noisier than centres against the masks. Fascicle angle error mean/median/p90: **512x768 grouped 0.88/0.58/1.75 deg**, 768x1152 grouped 1.02/0.66/2.21, their ensemble 0.92. Remaining apo outliers are mostly label inconsistency (near-identical frames 0907/0915/1045 vs 0693/0701 have the deep aponeurosis labelled on different lines) and one image whose superficial aponeurosis the new filters dropped (fallback added). **The script's member choice was buggy** (only considered 768 fascicle models and a 2-model apo ensemble), so this run's submission uses a worse combination; superseded by run 8. Sample rows vs ours: see Open issues |
 | 6 | `charlesdidier/umud-apo-v2` | `kaggle/runs/apo_v2.sh`: GPU 0 the exact run-2 apo recipe on the grouped split (honest baseline); GPU 1 apo 512x768 at lr 1e-4, cosine over 40 epochs run to completion, no early stopping, best thickness-error epoch kept. All apo models scored on grouped val; submission from the best grouped-trained apo + run-5 fasc. ~40 min | Thickness rel. error mean / median / p90, deep-angle error, Dice: **run-2 recipe on grouped split 3.69% / 0.55% / 4.2%, 0.44 deg, 0.803**; 512x768 v1 3.44% / 0.57% / 6.4%, 0.55 deg, 0.772; 512x768 v2 3.35% / 0.72% / 5.9%, 0.48 deg, 0.538; run 2 (leaked) 2.01% / 0.31% / 0.9%, 0.20 deg, 0.852. **No apo change beats the original recipe**; honest models all sit at ~3.4-3.7% mean, within noise. v2 was auto-picked but its best epoch was 6 (Dice 0.54): the mean thickness error is too noisy to select on. **Do not use this run's submission** |
 | 4 | `charlesdidier/umud-predict-v1` | `kaggle/runs/predict.sh`: no training; run-2 apo + run-3 768x1152 fasc, per-image calibration, measurements in mm, clipped to published ranges. ~5 min | All 309 calibrated. Raw medians per layout: PA 10.5-19.4 deg, FL 66-129 mm, MT 18-28 mm; only 2% of Lumify FL fell outside the published ranges (clipped). Outputs: `submission.csv`, `diagnostics.csv`, `calibration.csv`, `viz/fasc_test.png` |
 
@@ -170,6 +171,13 @@ crop rulers.
    muscle's two aponeuroses. `APO_EDGE="inner"` measures between the bands'
    muscle-side edges instead of their centres (~6% smaller MT on ground
    truth); which convention the experts used is unknown.
+10. **Masks through the log** (`src/umud/maskdump.py`, `predict.py
+   --dump-log`, `scripts/decode_log_dump.py`): notebook outputs can't be
+   downloaded from the session, so predicted masks (4x downsampled,
+   bit-packed, zlib, base64) and the diagnostics table are printed to the
+   notebook log and rebuilt locally into masks and overlays. The topmost
+   pairing rule now falls back to the two largest components when only one
+   structure passes its filters.
 9. **Ensembles** (`inference.ensemble_prob`): members predict at their own
    size, probabilities are averaged on the image's grid, then thresholded.
    `predict.py` takes repeated `--apo CKPT CONFIG` / `--fasc CKPT CONFIG`;
@@ -223,9 +231,13 @@ crop rulers.
   inner, ~1-1.5 mm), and the crop calibration assumption. The variant
   submissions in run 7's `probes/` each change one choice so the
   leaderboard can attribute the error; they need the user's OK to submit.
-- `sample_submission.csv`'s two rows (IMG_00001: 17.33 deg / 79.42 mm /
-  21.78 mm; IMG_00002: 12.88 / 69.42 / 15.48) may be real labels; run 7
-  prints our predictions next to them.
+- `sample_submission.csv`'s two rows look like **real labels**: they satisfy
+  FL ~ MT/sin(PA) (15.48/sin 12.88 deg = 69.5 vs 69.42). Run 7 vs sample:
+  IMG_00001 PA 16.7/17.3 deg, FL 97.4/79.4 mm, MT 26.4/21.8 mm; IMG_00002
+  PA 9.0/12.9, FL 99.7/69.4, MT 19.2/15.5. **Our MT is ~22% high on both**
+  (x1.21, x1.24), inflating FL; on IMG_00001 our deep aponeurosis would be
+  ~63 px (4.7 mm) lower than the expert's, i.e. probably a deeper line.
+  Run 8 dumps the predicted masks to check this visually.
 - Earlier validation numbers (runs 2-3) come from the leaky random split;
   new experiments should use `split: grouped`.
 - Next levers for thickness: find the ~10% of validation images with large
