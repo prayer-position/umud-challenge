@@ -16,10 +16,13 @@ fasc=$(find "$INPUT" -name "$FASC_CKPT" | head -1)
 echo "apo: $apo"
 echo "fasc: $fasc ($FASC_CONFIG)"
 
-python scripts/calibrate_images.py --out "$OUT/calibration.csv"
+python scripts/calibrate_images.py --out "$OUT/extras/calibration.csv"
 python scripts/predict.py --apo-checkpoint "$apo" --apo-config configs/apo_seg.yaml \
     --fasc-checkpoint "$fasc" --fasc-config "$FASC_CONFIG"
 cp "$(ls submissions/submission_*.csv | tail -1)" "$OUT/submission.csv"
-cp "$(ls submissions/diagnostics_*.csv | tail -1)" "$OUT/diagnostics.csv"
+# Only submission.csv sits at the top of the output, so it's the one CSV
+# offered when submitting from the notebook; tables go to extras/.
+mkdir -p "$OUT/extras"
+cp "$(ls submissions/diagnostics_*.csv | tail -1)" "$OUT/extras/diagnostics.csv"
 python scripts/visualize_masks.py --pool fasc --source test --checkpoint "$fasc" --config "$FASC_CONFIG" \
     --n 12 --out "$OUT/viz/fasc_test.png"

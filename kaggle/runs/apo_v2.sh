@@ -67,7 +67,10 @@ for name in "${NEW[@]}"; do cp "outputs/checkpoints/${name}_best.pt" "$OUT/"; do
 python scripts/predict.py --apo-checkpoint "outputs/checkpoints/${best}_best.pt" --apo-config "$best_config" \
     --fasc-checkpoint "outputs/checkpoints/${FASC}_best.pt" --fasc-config "configs/$FASC.yaml"
 cp "$(ls submissions/submission_*.csv | tail -1)" "$OUT/submission.csv"
-cp "$(ls submissions/diagnostics_*.csv | tail -1)" "$OUT/diagnostics.csv"
+# Only submission.csv sits at the top of the output, so it's the one CSV
+# offered when submitting from the notebook; tables go to extras/.
+mkdir -p "$OUT/extras"
+cp "$(ls submissions/diagnostics_*.csv | tail -1)" "$OUT/extras/diagnostics.csv"
 python scripts/visualize_masks.py --pool apo --source val --checkpoint "outputs/checkpoints/${best}_best.pt" \
     --config "$best_config" --n 12 --out "$OUT/viz/apo_val_${best}.png"
 python scripts/visualize_masks.py --pool apo --source test --checkpoint "outputs/checkpoints/${best}_best.pt" \

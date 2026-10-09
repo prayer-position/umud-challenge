@@ -14,7 +14,7 @@ There is **no scalar-label CSV**. Ground truth is two disjoint sets of raster ma
 
 No single training image has both mask types. The approach here is therefore: train two segmentation models (aponeuroses, fascicles), run both on each test image, and derive PA/FL/MT geometrically from the two predicted masks (see `src/umud/geometry.py`). See `.claude` plan history / `notebooks/01_eda.ipynb` for how this was determined.
 
-`sample_submission.csv` is **semicolon-delimited** with a UTF-8 BOM: `image_id;pa_deg;fl_mm;mt_mm`.
+`sample_submission.csv` is **semicolon-delimited** with a UTF-8 BOM: `image_id;pa_deg;fl_mm;mt_mm`. Kaggle nevertheless parses submissions as plain comma-separated CSV and rejects the sample's format ("ID column image_id not found in submission"), so `scripts/predict.py` writes comma-separated UTF-8 without a BOM.
 
 ## Setup
 

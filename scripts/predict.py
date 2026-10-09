@@ -17,6 +17,18 @@ from umud.inference import load_model, predict_mask
 TEST_RANGES = {"pa_deg": (5.0, 45.0), "fl_mm": (30.0, 200.0), "mt_mm": (10.0, 50.0)}
 
 
+def check_submission_file(path: Path, image_ids: list[str]) -> None:
+    """Re-read the written file the way Kaggle does (plain pandas.read_csv)
+    and apply the official scorer's checks: an image_id column, one row per
+    test image, numeric finite predictions."""
+    df = pd.read_csv(path)
+    assert list(df.columns) == schema.SUBMISSION_COLUMNS, f"Kaggle would read columns {list(df.columns)}"
+    assert not df["image_id"].duplicated().any(), "duplicate image_id rows"
+    assert set(df["image_id"]) == set(image_ids), "image_id values don't match the test files"
+    values = df[schema.SUBMISSION_COLUMNS[1:]].apply(pd.to_numeric, errors="coerce").to_numpy()
+    assert np.isfinite(values).all(), "non-numeric, NaN or infinite predictions"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run both segmenters + geometry over the test set.")
     parser.add_argument("--apo-checkpoint", default=None)
@@ -116,7 +128,7 @@ def main() -> None:
             submission[column] = submission[column].clip(*TEST_RANGES[column])
 
     sample = pd.read_csv(
-        schema.SAMPLE_SUBMISSION_PATH, sep=schema.SUBMISSION_SEP, encoding=schema.SUBMISSION_ENCODING
+        schema.SAMPLE_SUBMISSION_PATH, sep=schema.SAMPLE_SUBMISSION_SEP, encoding=schema.SAMPLE_SUBMISSION_ENCODING
     )
     assert list(submission.columns) == list(sample.columns), "Submission columns don't match sample_submission.csv"
     assert len(submission) == len(test_files), "Row count doesn't match number of test images"
@@ -125,6 +137,7 @@ def main() -> None:
     out_path = schema.PROJECT_ROOT / "submissions" / f"submission_{timestamp}.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     submission.to_csv(out_path, sep=schema.SUBMISSION_SEP, index=False, encoding=schema.SUBMISSION_ENCODING)
+    check_submission_file(out_path, [p.name for p in test_files])
     diag.to_csv(out_path.with_name(f"diagnostics_{timestamp}.csv"), index=False)
     print(f"Wrote {out_path} ({len(submission)} rows) and its diagnostics CSV")
 

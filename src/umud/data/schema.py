@@ -9,8 +9,15 @@ FASC_MASK_DIR = PROJECT_ROOT / "fasc_masks_v1" / "fasc_masks_new_model_v1"
 TEST_IMAGE_DIR = PROJECT_ROOT / "test_images_v2" / "test_set_v2"
 
 SAMPLE_SUBMISSION_PATH = PROJECT_ROOT / "sample_submission.csv"
-SUBMISSION_SEP = ";"
-SUBMISSION_ENCODING = "utf-8-sig"
+# The organizers' sample_submission.csv is semicolon-delimited with a UTF-8
+# BOM, but Kaggle parses submissions as plain comma-separated CSV: a file in
+# the sample's format is rejected with "ID column image_id not found in
+# submission" (the whole header reads as one column). Read the sample in its
+# own format; write submissions as plain CSV.
+SAMPLE_SUBMISSION_SEP = ";"
+SAMPLE_SUBMISSION_ENCODING = "utf-8-sig"
+SUBMISSION_SEP = ","
+SUBMISSION_ENCODING = "utf-8"
 SUBMISSION_COLUMNS = ["image_id", "pa_deg", "fl_mm", "mt_mm"]
 
 IGNORED_FILENAMES = {"Thumbs.db"}
