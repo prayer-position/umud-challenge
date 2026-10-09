@@ -10,7 +10,7 @@ from umud.calibration import calibrate
 from umud.data import schema
 from umud.data.dataset import is_png, load_image
 from umud.geometry import fascicle_lines, measure_fascicle, measure_thickness
-from umud.inference import load_model, predict_mask
+from umud.inference import ensemble_mask, load_members
 
 # Ranges the organizers give for the test set (data description): clipping to
 # them can only move a prediction closer to a truth that lies inside.
@@ -31,27 +31,19 @@ def check_submission_file(path: Path, image_ids: list[str]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run both segmenters + geometry over the test set.")
-    parser.add_argument("--apo-checkpoint", default=None)
-    parser.add_argument("--fasc-checkpoint", default=None)
-    parser.add_argument("--apo-config", default="configs/apo_seg.yaml")
-    parser.add_argument("--fasc-config", default="configs/fasc_seg.yaml")
+    # Repeat --apo / --fasc to ensemble several models (mean probability).
+    parser.add_argument("--apo", nargs=2, action="append", required=True, metavar=("CHECKPOINT", "CONFIG"))
+    parser.add_argument("--fasc", nargs=2, action="append", required=True, metavar=("CHECKPOINT", "CONFIG"))
     parser.add_argument("--no-clip", action="store_true", help="Don't clip predictions to the published test ranges.")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N test images (smoke test).")
     parser.add_argument("--no-tta", action="store_true", help="Disable horizontal-flip test-time augmentation (used for models trained with flip: true).")
     args = parser.parse_args()
 
     device = utils.get_device()
-    apo_config = utils.load_config(args.apo_config)
-    fasc_config = utils.load_config(args.fasc_config)
-
-    apo_checkpoint = Path(args.apo_checkpoint or schema.PROJECT_ROOT / "outputs" / "checkpoints" / "apo_best.pt")
-    fasc_checkpoint = Path(args.fasc_checkpoint or schema.PROJECT_ROOT / "outputs" / "checkpoints" / "fasc_best.pt")
-
-    apo_model = load_model(apo_checkpoint, apo_config, device)
-    fasc_model = load_model(fasc_checkpoint, fasc_config, device)
-    # Flip TTA only for models that saw flipped images during training.
-    apo_tta = not args.no_tta and apo_config.get("flip", False)
-    fasc_tta = not args.no_tta and fasc_config.get("flip", False)
+    apo_members = load_members(args.apo, device)
+    fasc_members = load_members(args.fasc, device)
+    print(f"apo members: {[c for c, _ in args.apo]}")
+    print(f"fasc members: {[c for c, _ in args.fasc]}")
 
     test_files = schema.list_image_files(schema.TEST_IMAGE_DIR)
     if args.limit is not None:
@@ -62,8 +54,9 @@ def main() -> None:
         image = load_image(path)
         cal = calibrate(image, is_png=is_png(path))
 
-        apo_mask = predict_mask(apo_model, image, apo_config, device, tta=apo_tta)
-        fasc_mask = predict_mask(fasc_model, image, fasc_config, device, tta=fasc_tta)
+        # Flip TTA is applied per member, only for members trained with flips.
+        apo_mask = ensemble_mask(apo_members, image, device, tta=not args.no_tta)
+        fasc_mask = ensemble_mask(fasc_members, image, device, tta=not args.no_tta)
 
         rows.append({"image_id": path.name, "cal": cal, "apo_mask": apo_mask, "fasc_mask": fasc_mask})
 
@@ -84,6 +77,13 @@ def main() -> None:
         mt_mm = measure_thickness(row["apo_mask"], px_per_mm=row["scale"])
         fl_mm, pa_deg = measure_fascicle(row["fasc_mask"], apo_mask=row["apo_mask"], px_per_mm=row["scale"])
         results.append({"image_id": row["image_id"], "pa_deg": pa_deg, "fl_mm": fl_mm, "mt_mm": mt_mm})
+        # Alternative measurements for leaderboard checks (see make_variants.py).
+        fl_inner, pa_inner = measure_fascicle(
+            row["fasc_mask"], apo_mask=row["apo_mask"], px_per_mm=row["scale"], edge="inner"
+        )
+        fl_largest, pa_largest = measure_fascicle(
+            row["fasc_mask"], apo_mask=row["apo_mask"], px_per_mm=row["scale"], rule="largest"
+        )
         diagnostics.append(
             {
                 "image_id": row["image_id"],
@@ -94,11 +94,19 @@ def main() -> None:
                 "pa_deg": pa_deg,
                 "fl_mm": fl_mm,
                 "mt_mm": mt_mm,
+                "mt_inner": measure_thickness(row["apo_mask"], px_per_mm=row["scale"], edge="inner"),
+                "fl_inner": fl_inner,
+                "pa_inner": pa_inner,
+                "mt_largest": measure_thickness(row["apo_mask"], px_per_mm=row["scale"], rule="largest"),
+                "fl_largest": fl_largest,
+                "pa_largest": pa_largest,
             }
         )
 
     submission = pd.DataFrame(results, columns=schema.SUBMISSION_COLUMNS)
     diag = pd.DataFrame(diagnostics)
+    changed = (np.abs(diag["mt_mm"] - diag["mt_largest"]) > 0.05 * diag["mt_mm"]).sum()
+    print(f"aponeurosis pairing: {changed} images where the topmost and largest rules differ by >5% in MT")
     print("Raw predictions per layout (median, and share outside the published test ranges):")
     for column, (lo, hi) in TEST_RANGES.items():
         diag[f"{column}_out_of_range"] = ~diag[column].between(lo, hi)
@@ -130,6 +138,12 @@ def main() -> None:
     sample = pd.read_csv(
         schema.SAMPLE_SUBMISSION_PATH, sep=schema.SAMPLE_SUBMISSION_SEP, encoding=schema.SAMPLE_SUBMISSION_ENCODING
     )
+    # The sample's rows carry plausible values; if they are real labels they
+    # are the only test-set reference we have.
+    shown = sample.merge(submission, on="image_id", suffixes=("_sample", "_ours"))
+    if len(shown):
+        print("sample_submission rows vs ours:")
+        print(shown.round(2).to_string(index=False))
     assert list(submission.columns) == list(sample.columns), "Submission columns don't match sample_submission.csv"
     assert len(submission) == len(test_files), "Row count doesn't match number of test images"
 

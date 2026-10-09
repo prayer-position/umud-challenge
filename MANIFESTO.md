@@ -11,7 +11,7 @@ private to the `charlesdidier` account.
 | Aponeurosis model | Run 2 (original recipe). Honest error of that recipe: thickness 3.7% mean / 0.55% median, deep-apo angle 0.44 deg; retrains in runs 5-6 did not beat it |
 | Fascicle model | Run 5 (grouped split, 768x1152): honest val angle error 1.02 deg mean, 0.66 deg median |
 | Calibration | Per-image px/mm from on-screen rulers, all 309 test images (`src/umud/calibration.py`) |
-| Submission | Use `umud-predict-v1` version 2's `submission.csv` (run-2 apo + run-3 fasc, calibrated, comma-separated). Runs 5 and 6 produced submissions with weaker apo models; don't use them. **Nothing uploaded to the competition yet** |
+| Submission | Submitted: `umud-predict-v1` version 2, public score **0.92659**. Runs 5 and 6 produced submissions with weaker apo models; don't use them. **Nothing uploaded to the competition yet** |
 | Competition metric | Confirmed: mean of MAE/tolerance with tolerances PA 6 deg, FL 12 mm, MT 3 mm |
 
 ## Environment and access (2026-10-07)
@@ -65,6 +65,7 @@ private to the `charlesdidier` account.
 | 3 | `charlesdidier/umud-fasc-exp1` | Reworked fascicle pipeline (`kaggle/runs/fasc_experiments.sh`): 512x768 vs 768x1152 in parallel on 2x T4; baseline scored on the same val split; submission + overlays from the best. ~2 h 50 min | Val angle MAE / p90 / Dice (flip TTA): **768x1152 0.73 / 1.48 deg / 0.649** (early-stopped at 37, best epoch 27), 512x768 0.75 / 1.50 / 0.634 (stopped at 39, best 29), baseline 0.74 / 1.65 / 0.318. Dice doubled; angle error is tied at the ~1 deg label-noise floor of a leaky split, so it cannot rank them. Submission still uncalibrated (pixels) |
 | 5 | `charlesdidier/umud-grouped-v1` | `kaggle/runs/grouped_v1.sh`: both models retrained on the grouped split in parallel: apo 512x768 (GPU 0, lr 3e-4, cosine over 60, early stopping on thickness error), fasc 768x1152 (GPU 1, selected by angle error); scored with flip TTA; run-2 apo scored on the same split for reference; calibrated submission; overlays. ~2 h 4 min | Grouped val, mean / median / p90. **Fasc**: angle error 1.02 / 0.66 / 2.21 deg, Dice 0.560 (stopped at 26, best 16); first honest fascicle number (run 3's 0.73 was inflated by leakage). **Apo v1: worse than run 2**: thickness rel. error 3.4% / 0.57% / 6.4%, deep-angle error 0.55 deg, Dice 0.772, vs run 2 2.0% / 0.31% / 0.9%, 0.20 deg, 0.852 (run 2 saw ~22% of these images; run 6 showed the gap is mostly that leakage, contrary to what was first written here). The thickness metric jumped 3.5-8% between epochs, early stopping kept epoch 16 of 28 before the LR had decayed. Its submission also missed MT on 5 test images; **do not use this run's submission** |
 | 4b | `charlesdidier/umud-predict-v1` (version 2) | Run 4 again (same models, same predictions) with the comma-separated submission format | Done; `submission.csv` passed the Kaggle-style format check; only CSV at the top of the output (`extras/` holds calibration and diagnostics). Per-layout medians identical to run 4 |
+| 7 | `charlesdidier/umud-ensemble-v1` | `kaggle/runs/ensemble_v1.sh`: GPU 1 trains fasc 512x768 on the grouped split; GPU 0 scores grouped-trained apo models and ensembles with both pairing rules and edge conventions, listing the worst images; then fascicle singles vs ensemble; test predictions with the new pairing rule and the ensembles that beat their members; variant submissions in `probes/` | Running |
 | 6 | `charlesdidier/umud-apo-v2` | `kaggle/runs/apo_v2.sh`: GPU 0 the exact run-2 apo recipe on the grouped split (honest baseline); GPU 1 apo 512x768 at lr 1e-4, cosine over 40 epochs run to completion, no early stopping, best thickness-error epoch kept. All apo models scored on grouped val; submission from the best grouped-trained apo + run-5 fasc. ~40 min | Thickness rel. error mean / median / p90, deep-angle error, Dice: **run-2 recipe on grouped split 3.69% / 0.55% / 4.2%, 0.44 deg, 0.803**; 512x768 v1 3.44% / 0.57% / 6.4%, 0.55 deg, 0.772; 512x768 v2 3.35% / 0.72% / 5.9%, 0.48 deg, 0.538; run 2 (leaked) 2.01% / 0.31% / 0.9%, 0.20 deg, 0.852. **No apo change beats the original recipe**; honest models all sit at ~3.4-3.7% mean, within noise. v2 was auto-picked but its best epoch was 6 (Dice 0.54): the mean thickness error is too noisy to select on. **Do not use this run's submission** |
 | 4 | `charlesdidier/umud-predict-v1` | `kaggle/runs/predict.sh`: no training; run-2 apo + run-3 768x1152 fasc, per-image calibration, measurements in mm, clipped to published ranges. ~5 min | All 309 calibrated. Raw medians per layout: PA 10.5-19.4 deg, FL 66-129 mm, MT 18-28 mm; only 2% of Lumify FL fell outside the published ranges (clipped). Outputs: `submission.csv`, `diagnostics.csv`, `calibration.csv`, `viz/fasc_test.png` |
 
@@ -157,6 +158,25 @@ crop rulers.
    image having a > 0.95 twin in training (random split: 75% fascicle, 22%
    apo). Clusters are cached in `outputs/cache/`. The default stays `random`
    so earlier results remain comparable.
+8. **Aponeurosis pairing fix** (`src/umud/geometry.py`, `APO_RULE`):
+   ~10% of ground-truth apo masks hold 3+ wide structures (two stacked
+   muscles, double lines) and some also hold oblique fascicle lines, so the
+   original "two largest components" rule could measure across two muscles
+   (e.g. `image_0022`: 448 px vs 124 px). The "topmost" rule joins broken
+   fragments, keeps structures spanning >= 50% of the widest one and within
+   10 deg of its angle, then takes the topmost as superficial and the next
+   one >= 8% of the image height below as deep. It changes MT on 40 of 1048
+   ground-truth masks; overlays of the 12 largest changes all show the top
+   muscle's two aponeuroses. `APO_EDGE="inner"` measures between the bands'
+   muscle-side edges instead of their centres (~6% smaller MT on ground
+   truth); which convention the experts used is unknown.
+9. **Ensembles** (`inference.ensemble_prob`): members predict at their own
+   size, probabilities are averaged on the image's grid, then thresholded.
+   `predict.py` takes repeated `--apo CKPT CONFIG` / `--fasc CKPT CONFIG`;
+   `scripts/eval_ensemble.py` scores any member set on the grouped split
+   (all pairing/edge variants for apo) and lists the worst images;
+   `scripts/make_variants.py` writes probe submissions from
+   `diagnostics.csv` (inner edges, old pairing, FL x0.85 / x1.15).
 7. **Aponeurosis metric and shared tooling**: `ApoThicknessEvaluator`
    (`src/umud/evaluation.py`) scores muscle thickness from predicted vs
    ground-truth masks as a relative error on the native label canvas (no
@@ -172,6 +192,7 @@ crop rulers.
 | Date (UTC) | File | Result |
 |---|---|---|
 | 2026-10-09 07:56 | run 4 `calibration.csv` (wrong file picked) | Error: "Submission is missing required prediction column 'pa_deg'" |
+| 2026-10-09 08:11 | run 4b `submission.csv` (run-2 apo + run-3 768x1152 fasc, calibrated) | **Public score 0.92659** (rank ~236). For scale: best public score 0.229, 20th ~0.30. The gap is far larger than thickness outliers or ensembling can close, so at least one target likely has a systematic error (see Open issues) |
 | 2026-10-09 07:56 | run 4 `submission.csv` | Error: "ID column image_id not found in submission". The file copied `sample_submission.csv`'s format (`;` separator, UTF-8 BOM), but Kaggle parses submissions as comma-separated CSV, so the header read as one column. Fixed: `predict.py` writes plain comma-separated UTF-8, checks the file the way Kaggle reads it, and run scripts put extra CSVs under `extras/` |
 
 ## Decisions
@@ -196,8 +217,15 @@ crop rulers.
 
 ## Open issues
 
-- Calibration assumptions above are unverified against labels; the first
-  leaderboard submission will show whether FL/MT are in the right range.
+- **Leaderboard gap (0.93 vs 0.23 for the leaders)**: per-target errors are
+  unknown. Likely candidates: FL (most sensitive: FL ~ MT/sin(PA), so a 1 deg
+  PA error at ~12 deg moves FL by ~8%), the MT edge convention (centre vs
+  inner, ~1-1.5 mm), and the crop calibration assumption. The variant
+  submissions in run 7's `probes/` each change one choice so the
+  leaderboard can attribute the error; they need the user's OK to submit.
+- `sample_submission.csv`'s two rows (IMG_00001: 17.33 deg / 79.42 mm /
+  21.78 mm; IMG_00002: 12.88 / 69.42 / 15.48) may be real labels; run 7
+  prints our predictions next to them.
 - Earlier validation numbers (runs 2-3) come from the leaky random split;
   new experiments should use `split: grouped`.
 - Next levers for thickness: find the ~10% of validation images with large

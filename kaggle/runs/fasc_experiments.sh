@@ -56,8 +56,8 @@ if [ "$best" = fasc_baseline ]; then best_config=configs/fasc_seg.yaml; else bes
 best_ckpt=outputs/checkpoints/${best}_best.pt
 
 set -e
-python scripts/predict.py --apo-checkpoint outputs/checkpoints/apo_best.pt --apo-config configs/apo_seg.yaml \
-    --fasc-checkpoint "$best_ckpt" --fasc-config "$best_config"
+python scripts/predict.py --apo outputs/checkpoints/apo_best.pt configs/apo_seg.yaml \
+    --fasc "$best_ckpt" "$best_config"
 cp "$(ls submissions/submission_*.csv | tail -1)" "$OUT/submission.csv"
 cp "$best_ckpt" "$OUT/fasc_best.pt"
 cp outputs/checkpoints/apo_best.pt "$OUT/apo_best.pt"

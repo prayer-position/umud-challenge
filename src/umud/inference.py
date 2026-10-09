@@ -56,3 +56,39 @@ def predict_mask(
     batch = prepare_input(image, tuple(config["image_size"])).unsqueeze(0).to(device)
     prob = predict_prob(model, batch, tta=tta)[0].cpu().numpy()
     return upsample_and_threshold(prob, out_shape or image.shape[:2], threshold)
+
+
+Member = tuple[torch.nn.Module, dict]
+
+
+def load_members(specs: list[tuple[str, str]], device: torch.device) -> list[Member]:
+    """Load (checkpoint, config path) pairs as ensemble members."""
+    from umud.utils import load_config
+
+    members = []
+    for checkpoint, config_path in specs:
+        config = load_config(config_path)
+        members.append((load_model(Path(checkpoint), config, device), config))
+    return members
+
+
+def ensemble_prob(
+    members: list[Member], image: np.ndarray, device: torch.device, out_shape: tuple[int, int], tta: bool = True
+) -> np.ndarray:
+    """Mean foreground probability of all members at `out_shape`. Each member
+    sees the image at its own training size; flip TTA is used for members
+    trained with flips (when tta is on)."""
+    total = np.zeros(out_shape, dtype=np.float32)
+    for model, config in members:
+        batch = prepare_input(image, tuple(config["image_size"])).unsqueeze(0).to(device)
+        prob = predict_prob(model, batch, tta=tta and config.get("flip", False))[0].cpu().numpy()
+        total += cv2.resize(prob, (out_shape[1], out_shape[0]), interpolation=cv2.INTER_LINEAR)
+    return total / len(members)
+
+
+def ensemble_mask(
+    members: list[Member], image: np.ndarray, device: torch.device, out_shape: tuple[int, int] | None = None,
+    tta: bool = True, threshold: float = 0.5,
+) -> np.ndarray:
+    """Binary mask from the members' mean probability (see ensemble_prob)."""
+    return (ensemble_prob(members, image, device, out_shape or image.shape[:2], tta) > threshold).astype(np.uint8)

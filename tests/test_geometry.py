@@ -109,3 +109,51 @@ def test_measure_thickness_averages_across_width():
     shape = (200, 400)
     apo_mask = _line_mask(shape, 40, 0, 40, 399) | _line_mask(shape, 80, 0, 120, 399)
     assert abs(measure_thickness(apo_mask) - 60) < 3
+
+
+def _band(shape, row, col0, col1, half=4):
+    mask = np.zeros(shape, dtype=np.uint8)
+    mask[row - half : row + half + 1, col0:col1] = 1
+    return mask
+
+
+def test_thickness_uses_top_two_of_three_stacked_aponeuroses():
+    # Two stacked muscles: aponeuroses at rows 40, 140, 260; the deepest is
+    # the largest band. The target muscle is the top one (40 -> 140).
+    shape = (300, 400)
+    mask = _band(shape, 40, 20, 380) | _band(shape, 140, 20, 380) | _band(shape, 260, 0, 400, half=8)
+    assert abs(measure_thickness(mask) - 100) < 2
+    assert abs(measure_thickness(mask, rule="largest") - 100) > 50  # the old rule pairs 40/260 or 140/260
+
+
+def test_thickness_joins_a_broken_aponeurosis():
+    # Superficial aponeurosis broken into two thick pieces; the deep one is
+    # long but thin, so the old rule pairs the two pieces.
+    shape = (300, 400)
+    mask = _band(shape, 50, 0, 190, half=6) | _band(shape, 52, 210, 400, half=6) | _band(shape, 200, 0, 400, half=2)
+    assert abs(measure_thickness(mask) - 149) < 3
+    assert measure_thickness(mask, rule="largest") < 10
+
+
+def test_thickness_skips_a_double_superficial_line():
+    # A second line 12 px under the superficial one (< 8% of the height)
+    # belongs to the superficial aponeurosis, not the deep one.
+    shape = (300, 400)
+    mask = _band(shape, 50, 0, 400) | _band(shape, 62, 0, 400, half=2) | _band(shape, 200, 0, 400)
+    assert abs(measure_thickness(mask) - 150) < 2
+
+
+def test_inner_edge_thickness_excludes_band_widths():
+    shape = (300, 400)
+    mask = _band(shape, 50, 0, 400, half=5) | _band(shape, 200, 0, 400, half=5)
+    assert abs(measure_thickness(mask) - 150) < 1
+    assert abs(measure_thickness(mask, edge="inner") - 140) < 1
+
+
+def test_thickness_ignores_oblique_fascicle_lines_in_apo_mask():
+    # Some apo label masks also hold fascicle lines: a long oblique line
+    # between the aponeuroses must not be taken as the deep aponeurosis.
+    shape = (300, 400)
+    mask = _band(shape, 40, 0, 400) | _band(shape, 250, 0, 400)
+    mask |= _line_mask(shape, 160, 60, 90, 330)  # ~15 degrees, 2/3 of the width
+    assert abs(measure_thickness(mask) - 210) < 2

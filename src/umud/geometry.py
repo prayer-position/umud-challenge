@@ -39,14 +39,6 @@ def _fit_line(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 Scale = tuple[float, float]
 
 
-def _largest_components(mask: np.ndarray, n: int, px_per_mm: Scale = (1.0, 1.0)) -> list[np.ndarray]:
-    """Return up to n largest connected components as (row, col) point
-    arrays in mm, largest first."""
-    labeled = label(mask > 0)
-    regions = sorted(regionprops(labeled), key=lambda r: r.area, reverse=True)
-    return [r.coords / np.asarray(px_per_mm) for r in regions[:n]]
-
-
 def fascicle_lines(
     mask: np.ndarray, min_length_frac: float = MIN_FASCICLE_LENGTH_FRAC, px_per_mm: Scale = (1.0, 1.0)
 ) -> list[tuple[np.ndarray, np.ndarray, float]]:
@@ -108,32 +100,126 @@ def _intersect(p: np.ndarray, d: np.ndarray, q: np.ndarray, e: np.ndarray) -> fl
     return float((w[0] * e[1] - w[1] * e[0]) / cross)
 
 
-def _aponeurosis_components(apo_mask: np.ndarray, px_per_mm: Scale) -> list[np.ndarray]:
-    """The two largest aponeurosis components in mm, ordered superficial
-    (smaller mean row) first."""
-    return sorted(_largest_components(apo_mask, n=2, px_per_mm=px_per_mm), key=lambda c: c[:, 0].mean())
+# How the aponeurosis pair is chosen from a mask:
+# - "topmost" (default): join broken fragments of one aponeurosis, keep
+#   structures spanning >= APO_MIN_SPAN of the widest one and within
+#   APO_MAX_TILT degrees of its angle (some apo masks also contain oblique
+#   fascicle lines), take the topmost as superficial and the next one at
+#   least APO_MIN_GAP of the image height below it as deep. ~10% of
+#   ground-truth apo masks hold 3+ wide structures (two stacked muscles,
+#   double lines); the target muscle is the top one.
+# - "largest": the two largest components (the original rule).
+APO_RULE = "topmost"
+# Where an aponeurosis line sits: "center" of its band, or the "inner"
+# (muscle-side) edge: the lower edge of the superficial aponeurosis and the
+# upper edge of the deep one.
+APO_EDGE = "center"
+APO_MIN_AREA = 0.02  # of the largest component
+APO_MERGE_GAP = 0.02  # of the image height: fragments this close are one line
+APO_MIN_SPAN = 0.5  # of the widest structure's horizontal span
+APO_MAX_TILT = 10.0  # degrees from the widest structure
+APO_MIN_GAP = 0.08  # of the image height between superficial and deep
 
 
-def _aponeurosis_lines(apo_mask: np.ndarray, px_per_mm: Scale) -> list[tuple[np.ndarray, np.ndarray]]:
-    return [_fit_line(c) for c in _aponeurosis_components(apo_mask, px_per_mm)]
+def _row_at(centroid: np.ndarray, direction: np.ndarray, col: float) -> float:
+    if abs(direction[1]) < 1e-6:
+        return float(centroid[0])
+    return float(centroid[0] + direction[0] * (col - centroid[1]) / direction[1])
 
 
-def deep_aponeurosis_angle(apo_mask: np.ndarray, px_per_mm: Scale = (1.0, 1.0)) -> float:
+def _edge_points(coords_px: np.ndarray, lower: bool) -> np.ndarray:
+    """Per image column, the lowest (lower=True) or highest pixel of a band."""
+    order = np.lexsort((coords_px[:, 0] if lower else -coords_px[:, 0], coords_px[:, 1]))
+    sorted_coords = coords_px[order]
+    last_of_col = np.r_[np.flatnonzero(np.diff(sorted_coords[:, 1])), len(sorted_coords) - 1]
+    return sorted_coords[last_of_col]
+
+
+def _aponeurosis_pair(
+    apo_mask: np.ndarray, px_per_mm: Scale, rule: str | None = None, edge: str | None = None
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Superficial and deep aponeurosis as (centroid, direction, coords), all
+    in mm, superficial first; fewer than two entries if not found."""
+    rule, edge = rule or APO_RULE, edge or APO_EDGE
+    scale = np.asarray(px_per_mm, dtype=float)
+    regions = sorted(regionprops(label(apo_mask > 0)), key=lambda r: r.area, reverse=True)
+    if rule == "largest":
+        groups = [r.coords for r in regions[:2]]
+    else:
+        regions = [r for r in regions if regions and r.area >= APO_MIN_AREA * regions[0].area]
+        height_mm = apo_mask.shape[0] / scale[0]
+        lines = [_fit_line(r.coords / scale) for r in regions]
+        spans = [(r.coords[:, 1].min() / scale[1], r.coords[:, 1].max() / scale[1]) for r in regions]
+        parent = list(range(len(regions)))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                i = parent[i]
+            return i
+
+        for i in range(len(regions)):
+            for j in range(i + 1, len(regions)):
+                # Compare the two lines where they overlap, or midway across
+                # the gap between them.
+                lo, hi = max(spans[i][0], spans[j][0]), min(spans[i][1], spans[j][1])
+                col = (lo + hi) / 2
+                gap = abs(_row_at(*lines[i], col) - _row_at(*lines[j], col))
+                if gap < APO_MERGE_GAP * height_mm:
+                    parent[find(i)] = find(j)
+        merged: dict[int, list[np.ndarray]] = {}
+        for i, region in enumerate(regions):
+            merged.setdefault(find(i), []).append(region.coords)
+        groups = [np.concatenate(g) for g in merged.values()]
+        widths = [(g[:, 1].max() - g[:, 1].min()) / scale[1] for g in groups]
+        if groups:
+            widest = _fit_line(groups[int(np.argmax(widths))] / scale)[1]
+            groups = [
+                g
+                for g, w in zip(groups, widths)
+                if w >= APO_MIN_SPAN * max(widths) and _acute_angle_deg(_fit_line(g / scale)[1], widest) <= APO_MAX_TILT
+            ]
+        centre = apo_mask.shape[1] / 2 / scale[1]
+        rows = [_row_at(*_fit_line(g / scale), centre) for g in groups]
+        order = np.argsort(rows)
+        groups = [groups[i] for i in order]
+        rows = [rows[i] for i in order]
+        if len(groups) >= 2:
+            deep = next((k for k in range(1, len(groups)) if rows[k] - rows[0] >= APO_MIN_GAP * height_mm), 1)
+            groups = [groups[0], groups[deep]]
+
+    groups = sorted(groups, key=lambda g: g[:, 0].mean())
+    pair = []
+    for k, coords in enumerate(groups):
+        points = coords
+        if edge == "inner" and len(groups) == 2:
+            points = _edge_points(coords, lower=(k == 0))
+        centroid, direction = _fit_line(points / scale)
+        pair.append((centroid, direction, coords / scale))
+    return pair
+
+
+def _aponeurosis_lines(apo_mask: np.ndarray, px_per_mm: Scale, **kwargs) -> list[tuple[np.ndarray, np.ndarray]]:
+    return [(c, d) for c, d, _ in _aponeurosis_pair(apo_mask, px_per_mm, **kwargs)]
+
+
+def deep_aponeurosis_angle(apo_mask: np.ndarray, px_per_mm: Scale = (1.0, 1.0), **kwargs) -> float:
     """Angle of the deep aponeurosis against the image horizontal (see
-    `line_angle_deg`), or NaN without two aponeurosis components."""
-    lines = _aponeurosis_lines(apo_mask, px_per_mm)
+    `line_angle_deg`), or NaN without two aponeuroses. kwargs: rule, edge."""
+    lines = _aponeurosis_lines(apo_mask, px_per_mm, **kwargs)
     return line_angle_deg(lines[-1][1]) if len(lines) == 2 else float("nan")
 
 
-def measure_thickness(apo_mask: np.ndarray, px_per_mm: Scale = (1.0, 1.0)) -> float:
+def measure_thickness(apo_mask: np.ndarray, px_per_mm: Scale = (1.0, 1.0), **kwargs) -> float:
     """Muscle thickness: perpendicular distance from the deep aponeurosis to
     the superficial one, averaged over three points (25/50/75%) across the
     width both aponeuroses cover, as in the manual protocol. Returns NaN if
-    fewer than two aponeurosis components are found."""
-    components = _aponeurosis_components(apo_mask, px_per_mm)
-    if len(components) < 2:
+    fewer than two aponeuroses are found. kwargs: rule, edge (see APO_RULE,
+    APO_EDGE)."""
+    pair = _aponeurosis_pair(apo_mask, px_per_mm, **kwargs)
+    if len(pair) < 2:
         return float("nan")
-    (sup_c, sup_d), (deep_c, deep_d) = (_fit_line(c) for c in components)
+    (sup_c, sup_d, sup_coords), (deep_c, deep_d, deep_coords) = pair
+    components = [sup_coords, deep_coords]
 
     left = max(c[:, 1].min() for c in components)
     right = min(c[:, 1].max() for c in components)
@@ -154,6 +240,7 @@ def measure_fascicle(
     apo_mask: np.ndarray | None = None,
     px_per_mm: Scale = (1.0, 1.0),
     min_length_frac: float = MIN_FASCICLE_LENGTH_FRAC,
+    **apo_kwargs,
 ) -> tuple[float, float]:
     """Returns (fascicle_length, pennation_angle_deg), each the median over
     all fascicle segments; length is in mm given `px_per_mm`.
@@ -169,7 +256,7 @@ def measure_fascicle(
     if not lines:
         return float("nan"), float("nan")
 
-    apo_lines = _aponeurosis_lines(apo_mask, px_per_mm) if apo_mask is not None else []
+    apo_lines = _aponeurosis_lines(apo_mask, px_per_mm, **apo_kwargs) if apo_mask is not None else []
     reference = apo_lines[-1][1] if apo_lines else np.array([0.0, 1.0])
 
     angles = [_acute_angle_deg(direction, reference) for _, direction, _ in lines]

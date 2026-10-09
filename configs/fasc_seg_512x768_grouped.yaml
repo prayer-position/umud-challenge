@@ -1,0 +1,23 @@
+# Fascicle model at 512x768 on the grouped split (no near-duplicate
+# leakage between train and validation). Fascicle labels
+# are 1px lines, so masks are resized line-preservingly and dilated to
+# ~3px; checkpoints are picked by validation fascicle-angle error.
+arch: Unet
+image_size: [512, 768]
+encoder: resnet34
+num_classes: 1
+line_px: 3
+batch_size: 8
+lr: 0.0003
+scheduler: cosine
+warmup_epochs: 1
+epochs: 50
+early_stopping_patience: 10
+select_metric: angle_mae
+amp: true
+cache: true
+flip: true
+num_workers: 2
+seed: 42
+val_frac: 0.15
+split: grouped

@@ -17,8 +17,8 @@ echo "apo: $apo"
 echo "fasc: $fasc ($FASC_CONFIG)"
 
 python scripts/calibrate_images.py --out "$OUT/extras/calibration.csv"
-python scripts/predict.py --apo-checkpoint "$apo" --apo-config configs/apo_seg.yaml \
-    --fasc-checkpoint "$fasc" --fasc-config "$FASC_CONFIG"
+python scripts/predict.py --apo "$apo" configs/apo_seg.yaml \
+    --fasc "$fasc" "$FASC_CONFIG"
 cp "$(ls submissions/submission_*.csv | tail -1)" "$OUT/submission.csv"
 # Only submission.csv sits at the top of the output, so it's the one CSV
 # offered when submitting from the notebook; tables go to extras/.

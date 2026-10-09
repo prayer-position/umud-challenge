@@ -51,8 +51,8 @@ PY
 
 set -e
 for name in $APO $FASC; do cp "outputs/checkpoints/${name}_best.pt" "$OUT/"; done
-python scripts/predict.py --apo-checkpoint "outputs/checkpoints/${APO}_best.pt" --apo-config "configs/$APO.yaml" \
-    --fasc-checkpoint "outputs/checkpoints/${FASC}_best.pt" --fasc-config "configs/$FASC.yaml"
+python scripts/predict.py --apo "outputs/checkpoints/${APO}_best.pt" "configs/$APO.yaml" \
+    --fasc "outputs/checkpoints/${FASC}_best.pt" "configs/$FASC.yaml"
 cp "$(ls submissions/submission_*.csv | tail -1)" "$OUT/submission.csv"
 # Only submission.csv sits at the top of the output, so it's the one CSV
 # offered when submitting from the notebook; tables go to extras/.
