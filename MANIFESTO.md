@@ -21,10 +21,14 @@ private to the `charlesdidier` account.
   the API is called directly with `curl` (`kernels/push`, `kernels/status`,
   `kernels/output`, `competitions/data/download-all`).
 - Competition data downloads fine: 2.75 GB zip, 7,930 files, ~6 GB unpacked.
-- Blocked from the session: `huggingface.co` (pretrained weights), and
-  `www.kaggleusercontent.com` (Kaggle notebook output files). Outputs must be
-  fetched from each notebook's Output tab until that host is allowed.
-  Inside Kaggle notebooks both work, so training uses ImageNet weights.
+- Blocked from the session: `huggingface.co` (pretrained weights). Inside
+  Kaggle notebooks it works, so training uses ImageNet weights.
+- `www.kaggleusercontent.com` (notebook output files) was blocked until
+  2026-10-09, when the user allowed it: outputs now download with
+  `curl -L https://www.kaggle.com/api/v1/kernels/output/download/<owner>/<slug>/<path>`
+  (checked: run 8's diagnostics match the log-decoded copy exactly, its
+  submission.csv matches `1_v8_base.csv`, and a 98 MB checkpoint downloads
+  in ~4 s and loads). The log dump (`--dump-log`) is no longer needed.
 - The session has 4 CPUs and no GPU: local runs are code smoke tests only
   (random encoder weights, a few dozen images); real training runs on Kaggle.
 
